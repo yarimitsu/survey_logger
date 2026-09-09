@@ -41,6 +41,8 @@ and cost a debugging round. No cache bumping needed during development.
 - Layout: map is the main view; all controls in a left sidebar with Log/Focal
   tabs. Buttons at the 44px iOS touch minimum.
 - Sequential surfacing numbers within each focal (surfacing_num, surfacing_id).
+- Timestamped behaviours replacing the single blow button: blow, breach, lunge,
+  fluke up, fluke down, slap, other. Store `behaviors`, DB v2.
 - USB GPS on COM3 at 4800 baud, read in-page via the Web Serial API (gps.js).
   Auto-reconnect on drop, forced port reopen on a silent feed.
 - gps_source / gps_time_utc columns on TRACK rows.
@@ -185,6 +187,27 @@ and cost a debugging round. No cache bumping needed during development.
 - The clear-data dialog's Export button writes both files. Exporting one and
   then clearing would silently discard the other.
 - seq is per file. Cross-file order is still recoverable from ts.
+- The single blow button became a set of timestamped behaviours on 2026-09-09
+  (user request). The record field is `behavior`; the sticky Unknown/Transit/
+  Foraging state was RENAMED from `behavior` to `activity` in the same change,
+  because two columns called behavior meaning different things is the notation
+  collision that costs an afternoon later. Buttons: .behavior-btn (events) and
+  .activity-btn (sticky).
+- BEHAVIORS lives in app.js and the button grid is rendered from it, so the
+  buttons and the exported strings cannot drift. Values are stored verbatim:
+  ADD to the list, never rename, once a season has data.
+- Only `blow` closes a dive and opens a surfacing (user decision, 2026-09-09).
+  A fluke up marks a dive starting, so auto-opening a surfacing would be wrong,
+  and a breach mid-dive is still a real observation.
+- logBehavior does NOT require an open SURFACE interval, unlike the old logBlow.
+  Refusing to record a behaviour seen during a dive would silently drop data.
+- countBlows filters behavior === 'blow'. The panel count is "blows this
+  surfacing", a respiration measure; a breach must not inflate it.
+- record_type BLOW became BEHAVIOR. DB v1 -> v2 copies `blows` into `behaviors`
+  with behavior: 'blow'. The old store is NOT deleted: a half-completed copy
+  that then dropped the source would lose field data.
+- importFile folds a legacy `blows` array into `behaviors` the same way, so an
+  export taken before v2 still merges. Tested; the IndexedDB upgrade path is not.
 - Focal labels restart at FocalA after a clear. If an old export is later merged
   with a new one, FocalA will appear twice; separate by date or keep the files
   apart.
@@ -215,6 +238,10 @@ and cost a debugging round. No cache bumping needed during development.
 - The iPad still has no pre-caching. There the survey area must be panned at the
   zoom levels to be used, while online, before leaving the dock.
 - The map layer control has not been exercised in a browser.
+- The IndexedDB v1 -> v2 migration is NOT tested. importFile's equivalent legacy
+  path is, but the upgrade transaction itself needs a real browser. To check:
+  open the app on a device that has pre-2026-09-09 blows and confirm the export
+  shows them as BEHAVIOR rows with behavior=blow.
 - The com0com / VSPE splitter route is documented but untested.
 - Serial reconnect, the stale/dead-feed watch, and the port picker have not been
   exercised against real hardware. The parser and the sentence-to-fix pipeline

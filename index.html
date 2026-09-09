@@ -85,10 +85,15 @@
         <div class="section-label">Whale ID <span class="muted">&mdash; blank if not identified</span></div>
         <input id="field-whale-id" class="wide-input" type="text" placeholder="e.g. HW-2026-014" autocomplete="off">
 
-        <div id="blow-section">
-          <div class="section-label">Blows this surfacing</div>
-          <button id="blow-btn" class="blow-btn">+1 Blow (<span id="blow-count">0</span>)</button>
-          <div class="hint">Tap on first sight &mdash; during a dive this closes the dive and opens a new surfacing.</div>
+        <div id="behavior-section">
+          <div class="section-label">Behavior <span class="muted">&mdash; each tap is timestamped</span></div>
+          <div id="behavior-grid"></div>
+          <div class="hint">
+            Blows this surfacing: <b><span id="blow-count">0</span></b>.
+            Blow on first sight &mdash; during a dive it closes the dive and opens a
+            new surfacing. The other behaviors are logged against the interval
+            that is already open.
+          </div>
         </div>
 
         <div class="section-label">Interval</div>
@@ -98,11 +103,11 @@
           <button class="interval-btn" data-type="UNCLEAR">Unclear</button>
         </div>
 
-        <div class="section-label">Behavior</div>
+        <div class="section-label">Activity <span class="muted">&mdash; applies until changed</span></div>
         <div class="segmented">
-          <button class="behavior-btn active" data-behavior="unknown">Unknown</button>
-          <button class="behavior-btn" data-behavior="transit">Transit</button>
-          <button class="behavior-btn" data-behavior="foraging">Foraging</button>
+          <button class="activity-btn active" data-activity="unknown">Unknown</button>
+          <button class="activity-btn" data-activity="transit">Transit</button>
+          <button class="activity-btn" data-activity="foraging">Foraging</button>
         </div>
 
         <div class="section-label">Interval quality</div>

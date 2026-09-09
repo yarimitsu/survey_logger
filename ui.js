@@ -247,7 +247,7 @@ const CLEAR_LABELS = {
   events: 'Events and notes',
   focals: 'Focal follows',
   focal_intervals: 'Intervals',
-  blows: 'Blows',
+  behaviors: 'Behaviors',
 };
 
 async function openClearModal() {
@@ -391,9 +391,39 @@ function stopIntervalTimer() {
   $('#surfacing-line').textContent = '—';
 }
 
-function setBehaviorButtons(active) {
-  for (const b of document.querySelectorAll('.behavior-btn')) {
-    b.classList.toggle('active', b.dataset.behavior === active);
+// Built from App.BEHAVIORS rather than written into index.html, so the button
+// row and the values that reach the CSV cannot drift apart.
+function renderBehaviorGrid(onTap) {
+  const grid = $('#behavior-grid');
+  grid.innerHTML = '';
+  for (const b of App.BEHAVIORS) {
+    const btn = el('button', {
+      className: 'behavior-btn' + (b === 'blow' ? ' primary' : ''),
+      textContent: b === 'blow' ? 'Blow' : b.replace(/^./, (c) => c.toUpperCase()),
+    });
+    btn.dataset.behavior = b;
+    btn.addEventListener('click', () => onTap(b));
+    grid.appendChild(btn);
+  }
+}
+
+// Brief highlight so a tap is visibly registered on a moving boat, where the
+// count only changes for blows and the other behaviours would otherwise give no
+// feedback at all.
+function flashBehavior(behavior) {
+  // Matched by walking the buttons rather than with an attribute selector:
+  // behaviour names contain spaces ("fluke up"), and this needs no escaping.
+  for (const b of document.querySelectorAll('#behavior-grid .behavior-btn')) {
+    if (b.dataset.behavior !== behavior) continue;
+    b.classList.add('just-tapped');
+    setTimeout(() => b.classList.remove('just-tapped'), 350);
+    return;
+  }
+}
+
+function setActivityButtons(active) {
+  for (const b of document.querySelectorAll('.activity-btn')) {
+    b.classList.toggle('active', b.dataset.activity === active);
   }
 }
 
@@ -410,5 +440,6 @@ const UI = {
   loadTileManifest,
   drawEventMarker, loadExistingIntoMap, renderTagGrid, openNotesPrompt, renderTagManager,
   showFocalPanel, showTab, setTrackToggle, setFocalHeader, refreshFocalIdState, openClearModal, setActiveIntervalButton, refreshBlowCount, bumpBlowCount,
-  startIntervalTimer, stopIntervalTimer, setBehaviorButtons, clearOptionalFields,
+  startIntervalTimer, stopIntervalTimer, setActivityButtons, clearOptionalFields,
+  renderBehaviorGrid, flashBehavior,
 };

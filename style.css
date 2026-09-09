@@ -225,20 +225,47 @@ button { font-family: inherit; border: none; cursor: pointer; }
   font-size: 12px;
   font-weight: 600;
 }
-.behavior-btn.active { background: var(--amber); color: #251500; border-color: var(--amber); }
+.activity-btn.active { background: var(--amber); color: #251500; border-color: var(--amber); }
 .interval-btn.active { background: var(--accent); color: #06120c; border-color: var(--accent); }
 .quality-btn.active { background: var(--text); color: #0a0e12; }
 
-/* Deliberately the largest control in the app: the most repeated and most
-   time-critical tap in a follow. */
-.blow-btn {
-  width: 100%;
-  padding: 16px;
+/* Behaviour buttons. Two columns so seven of them stay reachable one-handed
+   without scrolling the sidebar mid-follow. */
+#behavior-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.behavior-btn {
+  min-height: var(--tap);
+  padding: 10px 6px;
   border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Blow is the most repeated and most time-critical tap in a follow, so it keeps
+   the whole first row and the accent colour it had as a standalone button. */
+.behavior-btn.primary {
+  grid-column: 1 / -1;
+  padding: 16px;
   background: var(--accent);
   color: #06120c;
+  border-color: var(--accent);
   font-size: 18px;
   font-weight: 800;
+}
+
+/* Only the blow count moves on a tap, so the other six would give no feedback
+   at all without this. */
+.behavior-btn.just-tapped {
+  background: var(--amber);
+  color: #251500;
+  border-color: var(--amber);
 }
 
 .hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }

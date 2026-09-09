@@ -23,6 +23,7 @@ function ok(name, cond, got) {
 
 const wired = {};          // selector -> [event names]
 const elements = {};
+let created = 0;
 
 function fakeEl(sel) {
   if (elements[sel]) return elements[sel];
@@ -31,8 +32,10 @@ function fakeEl(sel) {
     textContent: '', value: '', title: '', disabled: false, innerHTML: '',
     dataset: {}, style: { setProperty() {} },
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    addEventListener(ev) { (wired[sel] = wired[sel] || []).push(ev); },
-    appendChild() {}, focus() {}, click() {}, querySelector: () => fakeEl(sel + ' *'),
+    _children: [], _events: [],
+    addEventListener(ev) { this._events.push(ev); (wired[sel] = wired[sel] || []).push(ev); },
+    appendChild(c) { this._children.push(c); },
+    focus() {}, click() {}, querySelector: () => fakeEl(sel + ' *'),
     setAttribute() {}, getBoundingClientRect: () => ({ width: 800, height: 600 }),
   };
   elements[sel] = e;
@@ -56,7 +59,8 @@ const L = {
 };
 
 const stores = {
-  meta: [], tags: [], events: [], track_points: [], focals: [], focal_intervals: [], blows: [],
+  meta: [], tags: [], events: [], track_points: [], focals: [], focal_intervals: [],
+  behaviors: [], blows: [],
 };
 const DB = {
   uuid: () => 'u' + Math.random().toString(36).slice(2),
@@ -91,7 +95,7 @@ function makeContext({ withManifest = true, withSerial = true } = {}) {
     document: {
       querySelector: fakeEl,
       querySelectorAll: () => [],
-      createElement: () => fakeEl('created'),
+      createElement: () => fakeEl('created-' + (created++)),
       addEventListener() {},
     },
     window: { addEventListener() {} },
@@ -142,6 +146,19 @@ async function startup(opts) {
   ok('focal button was wired', (wired['#focal-btn'] || []).includes('click'));
   ok('export CSV button was wired', (wired['#export-csv-btn'] || []).includes('click'));
   ok('clear data button was wired', (wired['#clear-data-btn'] || []).includes('click'));
+
+  // The behaviour grid is built in JS from App.BEHAVIORS, so unlike every other
+  // control it can be missing without index.html changing.
+  const grid = fakeEl('#behavior-grid');
+  ok('behaviour grid was rendered', grid._children.length === 7, grid._children.length);
+  ok('behaviour grid matches App.BEHAVIORS',
+     JSON.stringify(grid._children.map((c) => c.dataset.behavior)) ===
+       JSON.stringify(ctx.__App.BEHAVIORS),
+     grid._children.map((c) => c.dataset.behavior));
+  ok('every behaviour button is clickable',
+     grid._children.every((c) => (c._events || []).includes('click')));
+  ok('blow is the primary button',
+     grid._children[0].className.includes('primary'), grid._children[0].className);
 
   ok('map was created', ctx.__App.state.map !== null);
   ok('offline manifest was read', ctx.__App.state.tileManifest !== null);

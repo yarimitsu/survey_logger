@@ -220,8 +220,8 @@ in strict time order:
 
 - `survey_log_<device>_<stamp>.csv` - `EVENT` and `TRACK` rows: the vessel track
   and the timestamped tags and notes.
-- `focal_follows_<device>_<stamp>.csv` - `FOCAL`, `INTERVAL` and `BLOW` rows: the
-  follows, their surfacing and dive intervals, and every blow.
+- `focal_follows_<device>_<stamp>.csv` - `FOCAL`, `INTERVAL` and `BEHAVIOR` rows:
+  the follows, their surfacing and dive intervals, and every behaviour.
 
 `focal_id` and `focal_uuid` are carried in **both** files. They are the only link
 between them - without them there is no way to pull the vessel track for a given
@@ -252,8 +252,37 @@ rows:
   one written because something was logged. Lets a track be thinned back to pure
   cadence without losing which points coincide with an observation.
 
+### Behaviour vs activity
+
+Two different columns, deliberately named apart:
+
+- **`behavior`** - one timestamped observation, on a `BEHAVIOR` row. One of
+  `blow`, `breach`, `lunge`, `fluke up`, `fluke down`, `slap`, `other`. Each tap
+  is its own row with its own `ts`, so a surfacing with four blows and a breach
+  is five rows.
+- **`activity`** - the sticky state of the follow (`unknown`, `transit`,
+  `foraging`), carried on `FOCAL` and `INTERVAL` rows. It applies until you
+  change it, and it was called `behavior` before 2026-09-09.
+
+`secs_into_surfacing` gives each behaviour's offset from the start of the
+interval it fell in, and `surfacing_id` (e.g. `FocalA-S3`) ties it to a
+particular surfacing.
+
+**Blow is the only behaviour that changes the interval.** Tapping it during a
+dive closes the dive and opens a new surfacing, the way the old blow button did,
+because the first blow is what tells you the whale is up. Every other behaviour
+is filed against whatever interval is already open and changes nothing - a fluke
+up marks a dive *starting*, and a breach seen mid-dive is still a real
+observation rather than a reason to end the dive. The blow count in the panel
+counts blows only, so a breach does not inflate it.
+
+To change the button list, edit `BEHAVIORS` in `app.js`; the panel is built from
+it, so the buttons and the exported values cannot drift apart. Add to the list
+rather than renaming, once a season has data - the strings are stored verbatim.
+
 **Track cadence.** A point every 10 seconds, plus a forced point on every logged
-action: event tag, note, focal start and end, interval switch, and each blow. A
+action: event tag, note, focal start and end, interval switch, and every
+behaviour. A
 forced point takes its position from the last fix - there is no way to request
 one synchronously, and at 1 Hz on the USB receiver it is under a second stale -
 but its timestamp from the event, so it sorts alongside the record it
@@ -279,7 +308,7 @@ sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere sign
 two-digit year handling, invalid-fix rejection, sentence reassembly across stream
 chunks, and the end-to-end sentence-to-fix pipeline.
 
-`test_export.js` - 32 assertions covering the CSV export. It evaluates `app.js`
+`test_export.js` - 50 assertions covering the CSV export. It evaluates `app.js`
 against an in-memory database and checks that no row is lost or duplicated across
 the two files, that the cross-file join survives, that the cadence floor holds
 between forced points, that forced points carry the event timestamp, and that
@@ -294,7 +323,7 @@ worker's shell list, and that `NOAA_LAYERS` is identical in `ui.js` and
 `tools/fetch_tiles.py` - a mismatch there would make the cached chart silently
 differ from the online one, which you would not discover until you were offline.
 
-`test_startup.js` - 12 assertions that startup runs to completion and every
+`test_startup.js` - 16 assertions that startup runs to completion and every
 button actually gets a handler. `main.js` does all of startup inside one async
 `init()`, and a rejection anywhere in it is caught by a single handler at the
 bottom - so one broken await skips `wireControls()` and leaves the entire UI

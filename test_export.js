@@ -14,7 +14,8 @@ function ok(name, cond, got) {
 }
 
 const stores = {
-  meta: [], tags: [], events: [], track_points: [], focals: [], focal_intervals: [], blows: [],
+  meta: [], tags: [], events: [], track_points: [], focals: [], focal_intervals: [],
+  behaviors: [], blows: [],
 };
 let n = 0;
 const DB = {
@@ -87,11 +88,18 @@ async function build() {
   clock += 1000;
   await App.switchInterval('SURFACE');
   clock += 2000;
-  await App.logBlow();
+  await App.logBehavior('blow');
   clock += 2000;
-  await App.logBlow();
+  await App.logBehavior('blow');
+  clock += 1000;
+  await App.logBehavior('breach');
+  clock += 1000;
+  await App.logBehavior('fluke up');
   clock += 4000;
   await App.switchInterval('DIVE');
+  // A behaviour seen mid-dive must still be recorded, not dropped.
+  clock += 5000;
+  await App.logBehavior('slap');
   clock += 60000;
   await App.endFocal();
   return focal;
@@ -120,8 +128,8 @@ build().then(async () => {
 
   ok('survey log holds only EVENT and TRACK',
      JSON.stringify(types(survey)) === '["EVENT","TRACK"]', types(survey));
-  ok('focal file holds only BLOW, FOCAL, INTERVAL',
-     JSON.stringify(types(focal)) === '["BLOW","FOCAL","INTERVAL"]', types(focal));
+  ok('focal file holds only BEHAVIOR, FOCAL, INTERVAL',
+     JSON.stringify(types(focal)) === '["BEHAVIOR","FOCAL","INTERVAL"]', types(focal));
 
   // nothing lost in the split
   const total = survey.rows.length + focal.rows.length;
@@ -174,15 +182,51 @@ build().then(async () => {
   // surfacing numbering survives the split
   const surfacings = focal.rows.filter((r) => r.record_type === 'INTERVAL' && r.interval_type === 'SURFACE');
   ok('surfacing_num derived', surfacings.every((r) => Number(r.surfacing_num) >= 1), surfacings.map((r) => r.surfacing_num));
-  const blows = focal.rows.filter((r) => r.record_type === 'BLOW');
-  ok('both blows exported', blows.length === 2, blows.length);
-  ok('blows carry surfacing_id', blows.every((r) => r.surfacing_id === 'FocalA-S1'), blows.map((r) => r.surfacing_id));
+
+  // ---------- timestamped behaviours ----------
+  const beh = focal.rows.filter((r) => r.record_type === 'BEHAVIOR');
+  ok('every behaviour exported', beh.length === 5, beh.length);
+  ok('behaviour values round trip',
+     JSON.stringify(beh.map((r) => r.behavior)) ===
+       JSON.stringify(['blow', 'blow', 'breach', 'fluke up', 'slap']),
+     beh.map((r) => r.behavior));
+  ok('behaviour names with a space survive the CSV',
+     beh.some((r) => r.behavior === 'fluke up'), beh.map((r) => r.behavior));
+  ok('every behaviour has its own timestamp',
+     new Set(beh.map((r) => r.ts)).size === beh.length, beh.map((r) => r.ts));
+  ok('behaviours are in time order',
+     beh.every((r, i) => i === 0 || Number(r.ts) > Number(beh[i - 1].ts)), beh.map((r) => r.ts));
+
+  const blows = beh.filter((r) => r.behavior === 'blow');
+  ok('blows carry surfacing_id', blows.every((r) => r.surfacing_id === 'FocalA-S1'),
+     blows.map((r) => r.surfacing_id));
+  // The whole point of allowing a behaviour outside a surfacing.
+  const slap = beh.find((r) => r.behavior === 'slap');
+  ok('a behaviour logged during a dive is kept', slap !== undefined);
+  ok('a dive behaviour records the DIVE interval', slap && slap.interval_type === 'DIVE',
+     slap && slap.interval_type);
+
+  // activity (the sticky state) and behavior (the event) are separate columns
+  ok('focal file has an activity column', focal.cols.includes('activity'));
+  ok('focal file has a behavior column', focal.cols.includes('behavior'));
+  ok('activity and behavior are different columns',
+     focal.cols.indexOf('activity') !== focal.cols.indexOf('behavior'));
+  ok('FOCAL rows carry activity, not behavior',
+     focal.rows.filter((r) => r.record_type === 'FOCAL').every((r) => r.behavior === ''),
+     focal.rows.filter((r) => r.record_type === 'FOCAL').map((r) => r.behavior));
+
+  // every behaviour also forced a track point at its own timestamp
+  const behTs = new Set(beh.map((r) => r.ts));
+  const forcedAtBehaviour = survey.rows.filter(
+    (r) => r.record_type === 'TRACK' && r.trigger === 'event' && behTs.has(r.ts));
+  ok('every behaviour forced a track point at its timestamp',
+     forcedAtBehaviour.length === beh.length, [forcedAtBehaviour.length, beh.length]);
 
   // ---------- a survey day with no focal follows ----------
   // The likely first day out, and the clear-data dialog exports on an empty
   // database too. Both files must still be written, with headers, or the
   // missing one reads as "the export failed" rather than "nothing to report".
-  for (const k of ['focals', 'focal_intervals', 'blows']) stores[k].length = 0;
+  for (const k of ['focals', 'focal_intervals', 'behaviors']) stores[k].length = 0;
   saved.length = 0;
   const noFocal = await App.exportCSV();
   ok('no follows: still two files', saved.length === 2, saved.map((f) => f.name));
@@ -205,6 +249,45 @@ build().then(async () => {
   ok('empty db: reports zero rows',
      empty.rows === 0 && empty.files.every((f) => f.rows === 0),
      [empty.rows, empty.files.map((f) => f.rows)]);
+
+  // ---------- importing a pre-v2 export ----------
+  // Files exported before the blow button became a behaviour set carry a
+  // 'blows' array and no 'behaviors'. Those rows are all blows by definition.
+  // This is the same rule the IndexedDB v1->v2 upgrade applies, exercised here
+  // against the real importFile rather than a mock of the upgrade transaction.
+  for (const k of Object.keys(stores)) stores[k].length = 0;
+  const legacy = {
+    tags: [], events: [], track_points: [], focal_intervals: [],
+    focals: [{ id: 'dev9_f1', device_id: 'dev9', device_label: 'iPad-1',
+               focal_id: 'FocalA', whale_id: 'OLD-1', start_ts: 1, end_ts: 2 }],
+    blows: [
+      { id: 'dev9_b1', device_id: 'dev9', interval_id: 'dev9_i1', ts: 10 },
+      { id: 'dev9_b2', device_id: 'dev9', interval_id: 'dev9_i1', ts: 20 },
+    ],
+  };
+  const imported = await App.importFile({ text: async () => JSON.stringify(legacy) });
+
+  ok('legacy import: counted every row', imported === 3, imported);
+  ok('legacy import: blows landed in behaviors', stores.behaviors.length === 2,
+     stores.behaviors.length);
+  ok('legacy import: each is labelled blow',
+     stores.behaviors.every((b) => b.behavior === 'blow'),
+     stores.behaviors.map((b) => b.behavior));
+  ok('legacy import: ids preserved, so a re-import cannot duplicate',
+     stores.behaviors.map((b) => b.id).join(',') === 'dev9_b1,dev9_b2',
+     stores.behaviors.map((b) => b.id));
+
+  saved.length = 0;
+  await App.exportCSV();
+  const relegacy = parse(saved[1].text).rows.filter((r) => r.record_type === 'BEHAVIOR');
+  ok('legacy import: exports as BEHAVIOR rows', relegacy.length === 2, relegacy.length);
+  ok('legacy import: behavior column reads blow',
+     relegacy.every((r) => r.behavior === 'blow'), relegacy.map((r) => r.behavior));
+
+  // re-importing the same file must not double up
+  await App.importFile({ text: async () => JSON.stringify(legacy) });
+  ok('legacy import: re-import is idempotent', stores.behaviors.length === 2,
+     stores.behaviors.length);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

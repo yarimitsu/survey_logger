@@ -2,8 +2,13 @@
 // so exports from two devices can be merged with a plain put(), no collision logic needed.
 
 const DB_NAME = 'survey-logger';
-const DB_VERSION = 1;
-const STORES = ['meta', 'tags', 'events', 'track_points', 'focals', 'focal_intervals', 'blows'];
+// v2: the single blow button became a set of timestamped behaviours, so the
+// 'blows' store was superseded by 'behaviors'. The old store is migrated but NOT
+// deleted - a half-completed copy that then dropped the source would lose field
+// data, and an empty object store costs nothing.
+const DB_VERSION = 2;
+const STORES = ['meta', 'tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors'];
+const LEGACY_BLOWS = 'blows';
 
 let _db = null;
 
@@ -14,12 +19,25 @@ function uuid() {
 function openDB() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (ev) => {
       const db = req.result;
       for (const name of STORES) {
         if (!db.objectStoreNames.contains(name)) {
           db.createObjectStore(name, { keyPath: 'id' });
         }
+      }
+      // Every row in the old store was a blow by definition, so it carries
+      // across as behavior: 'blow'. Runs inside the version-change transaction,
+      // so either the whole migration lands or the upgrade fails and the old
+      // database is untouched.
+      if (ev.oldVersion < 2 && db.objectStoreNames.contains(LEGACY_BLOWS)) {
+        const dst = req.transaction.objectStore('behaviors');
+        req.transaction.objectStore(LEGACY_BLOWS).openCursor().onsuccess = (e) => {
+          const cur = e.target.result;
+          if (!cur) return;
+          dst.put({ ...cur.value, behavior: 'blow' });
+          cur.continue();
+        };
       }
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };

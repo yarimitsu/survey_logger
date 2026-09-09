@@ -85,7 +85,7 @@ function wireControls() {
       UI.setTrackToggle(true);
     }
     UI.setFocalHeader(focal);
-    UI.setBehaviorButtons('unknown');
+    UI.setActivityButtons('unknown');
     UI.showFocalPanel(true);
     // Open the first surface interval up front so the blow button is present
     // the moment the panel opens, not only after tapping Surface.
@@ -126,10 +126,10 @@ function wireControls() {
   // and interval so they can be joined back to the surfacing.
   UI.$('#focal-note-btn').addEventListener('click', () => UI.openNotesPrompt(null));
 
-  for (const btn of document.querySelectorAll('.behavior-btn')) {
+  for (const btn of document.querySelectorAll('.activity-btn')) {
     btn.addEventListener('click', async () => {
-      await App.setBehavior(btn.dataset.behavior);
-      UI.setBehaviorButtons(btn.dataset.behavior);
+      await App.setActivity(btn.dataset.activity);
+      UI.setActivityButtons(btn.dataset.activity);
     });
   }
 
@@ -143,24 +143,34 @@ function wireControls() {
     });
   }
 
-  // First blow of a surfacing doubles as "whale is up": it closes the dive and
-  // opens a new SURFACE interval, so the blow lands on the new surfacing.
+  // Behaviour buttons. Blow keeps its special meaning: the first blow of a
+  // surfacing doubles as "whale is up", so during a dive it closes the dive and
+  // opens a new SURFACE interval and the blow lands on the new surfacing.
   // switchInterval sets App.state.focalInterval synchronously, so a second tap
   // arriving mid-write sees the new interval and neither switches again nor
   // files its blow against the closed dive.
-  UI.$('#blow-btn').addEventListener('click', async () => {
+  //
+  // Every other behaviour is filed against whatever interval is already open. A
+  // fluke-up marks a dive starting, not a surfacing, so auto-opening one would
+  // be wrong; and a breach seen mid-dive is still a real observation.
+  UI.renderBehaviorGrid(async (behavior) => {
     if (!App.state.focal) return;
-    const needsNewSurfacing =
-      !App.state.focalInterval || App.state.focalInterval.type !== 'SURFACE';
-    if (needsNewSurfacing) {
-      await App.switchInterval('SURFACE');
-      UI.setActiveIntervalButton('SURFACE');
-      UI.clearOptionalFields();
-      UI.startIntervalTimer();
-      await UI.refreshBlowCount();
+    if (behavior === 'blow') {
+      const needsNewSurfacing =
+        !App.state.focalInterval || App.state.focalInterval.type !== 'SURFACE';
+      if (needsNewSurfacing) {
+        await App.switchInterval('SURFACE');
+        UI.setActiveIntervalButton('SURFACE');
+        UI.clearOptionalFields();
+        UI.startIntervalTimer();
+        await UI.refreshBlowCount();
+      }
+      // Bumped locally before the write so the number moves on the tap;
+      // countBlows() scans the whole store and must not sit in between.
+      UI.bumpBlowCount();
     }
-    UI.bumpBlowCount();
-    await App.logBlow();
+    UI.flashBehavior(behavior);
+    await App.logBehavior(behavior);
   });
 
   for (const btn of document.querySelectorAll('.quality-btn')) {

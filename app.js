@@ -17,7 +17,9 @@ const state = {
   focalInterval: null,     // current open focal_intervals record, or null
   surfacingNum: 0,         // display only; the exported number is derived from
                            // interval order so it stays correct after a merge
-  behavior: 'unknown',     // sticky behavior for the current focal
+  activity: 'unknown',     // sticky activity for the current focal (transit/foraging)
+                           // NOT the same thing as a `behavior` record, which is a
+                           // single timestamped event (blow, breach, fluke up...)
 };
 
 // ---------- geolocation ----------
@@ -185,7 +187,7 @@ async function startFocal() {
     start_ts: Date.now(),
     end_ts: null,
     notes: '',
-    behavior: state.behavior,
+    activity: state.activity,
   };
   await DB.put('focals', rec);
   state.focal = rec;
@@ -226,10 +228,10 @@ async function setWhaleId(value) {
   await DB.put('focals', state.focal);
 }
 
-async function setBehavior(b) {
-  state.behavior = b;
+async function setActivity(a) {
+  state.activity = a;
   if (state.focal) {
-    state.focal.behavior = b;
+    state.focal.activity = a;
     await DB.put('focals', state.focal);
   }
 }
@@ -255,7 +257,7 @@ async function switchInterval(type) {
     distance_m: null,
     bearing_to_whale: null,
     swim_direction: null,
-    behavior: state.behavior,
+    activity: state.activity,
   };
   state.focalInterval = rec;
   if (type === 'SURFACE') state.surfacingNum += 1;
@@ -274,22 +276,33 @@ async function updateCurrentInterval(patch) {
   await DB.put('focal_intervals', state.focalInterval);
 }
 
-async function logBlow() {
-  if (!state.focalInterval || state.focalInterval.type !== 'SURFACE') return null;
+// One timestamped behaviour, filed against whatever interval is open.
+//
+// Unlike the old blow-only version this does NOT require a SURFACE interval:
+// a fluke-up or a slap seen during a dive interval is still a real observation,
+// and refusing to record it would silently drop data. Only the blow button
+// carries the "the whale is up" meaning, and that logic lives in main.js where
+// the interval switch happens.
+async function logBehavior(behavior) {
+  if (!state.focal) return null;
   const rec = {
     id: `${state.config.device_id}_${DB.uuid()}`,
     device_id: state.config.device_id,
-    interval_id: state.focalInterval.id,
+    focal_uuid: state.focal.id,
+    interval_id: state.focalInterval ? state.focalInterval.id : null,
     ts: Date.now(),
+    behavior,
   };
-  await DB.put('blows', rec);
+  await DB.put('behaviors', rec);
   await forceTrackPoint(rec.ts);
   return rec;
 }
 
+// Blows only. The count shown in the panel is "blows this surfacing", which is
+// the respiration measure; a breach in the same surfacing must not inflate it.
 async function countBlows(intervalId) {
-  const all = await DB.getAll('blows');
-  return all.filter((b) => b.interval_id === intervalId).length;
+  const all = await DB.getAll('behaviors');
+  return all.filter((b) => b.interval_id === intervalId && b.behavior === 'blow').length;
 }
 
 async function endFocal() {
@@ -335,7 +348,7 @@ async function deactivateTag(id) {
 // Survey data only. Device identity (meta) and the tag list are configuration,
 // not observations, so they survive and the next survey starts with the same
 // device name and the same custom tags.
-const SURVEY_STORES = ['events', 'track_points', 'focals', 'focal_intervals', 'blows'];
+const SURVEY_STORES = ['events', 'track_points', 'focals', 'focal_intervals', 'behaviors'];
 
 async function surveyCounts() {
   const out = {};
@@ -355,7 +368,7 @@ async function clearSurveyData() {
 
 async function exportAll() {
   const dump = {};
-  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'blows']) {
+  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors']) {
     dump[store] = await DB.getAll(store);
   }
   dump._exported_by = state.config.device_id;
@@ -373,12 +386,18 @@ async function importFile(file) {
   const text = await file.text();
   const dump = JSON.parse(text);
   let count = 0;
-  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'blows']) {
+  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors']) {
     const rows = dump[store] || [];
     for (const row of rows) {
       await DB.put(store, row);
       count++;
     }
+  }
+  // A file exported before v2 has a 'blows' array and no 'behaviors'. Those rows
+  // are all blows by definition, same as the on-device migration.
+  for (const row of dump.blows || []) {
+    await DB.put('behaviors', { ...row, behavior: row.behavior || 'blow' });
+    count++;
   }
   return count;
 }
@@ -410,9 +429,15 @@ function isoOrBlank(ts) {
 // The browser cannot append to a file on disk. Instead every export re-reads the
 // whole local database, so each file is a strict superset of the last one and
 // nothing is lost by keeping only the newest.
+// The behaviours the focal panel offers, in button order. Stored verbatim in the
+// `behavior` field of a behaviors record, so changing a string here changes the
+// value that lands in the CSV - add to the list rather than renaming, once a
+// season has data.
+const BEHAVIORS = ['blow', 'breach', 'lunge', 'fluke up', 'fluke down', 'slap', 'other'];
+
 // EVENT and TRACK are the survey log; FOCAL, INTERVAL and BLOW are the follow.
 const SURVEY_TYPES = new Set(['EVENT', 'TRACK']);
-const FOCAL_TYPES = new Set(['FOCAL', 'INTERVAL', 'BLOW']);
+const FOCAL_TYPES = new Set(['FOCAL', 'INTERVAL', 'BEHAVIOR']);
 
 const SURVEY_COLUMNS = [
   'seq', 'record_type', 'ts', 'time_utc',
@@ -426,7 +451,7 @@ const FOCAL_COLUMNS = [
   'seq', 'record_type', 'ts', 'time_utc',
   'focal_id', 'whale_id', 'surfacing_num', 'surfacing_id',
   'interval_type', 'end_ts', 'end_time_utc', 'duration_s',
-  'behavior', 'quality', 'secs_into_surfacing',
+  'behavior', 'activity', 'quality', 'secs_into_surfacing',
   'lat', 'lon', 'distance_m', 'bearing_to_whale', 'swim_direction',
   'notes',
   'device_label', 'device_id', 'record_id', 'interval_id', 'focal_uuid',
@@ -442,9 +467,9 @@ function downloadCSV(name, text) {
 }
 
 async function exportCSV() {
-  const [events, tracks, intervals, blows, focals] = await Promise.all([
+  const [events, tracks, intervals, behaviors, focals] = await Promise.all([
     DB.getAll('events'), DB.getAll('track_points'), DB.getAll('focal_intervals'),
-    DB.getAll('blows'), DB.getAll('focals'),
+    DB.getAll('behaviors'), DB.getAll('focals'),
   ]);
 
   const intervalById = new Map(intervals.map((i) => [i.id, i]));
@@ -517,7 +542,7 @@ async function exportCSV() {
       ts: f.start_ts,
       end_ts: f.end_ts == null ? '' : f.end_ts,
       duration_s: f.end_ts ? (f.end_ts - f.start_ts) / 1000 : '',
-      behavior: f.behavior || '',
+      activity: f.activity || '',
       notes: f.notes || '',
       device_id: f.device_id,
       record_id: f.id,
@@ -533,7 +558,7 @@ async function exportCSV() {
       duration_s: iv.end_ts ? (iv.end_ts - iv.start_ts) / 1000 : '',
       interval_type: iv.type,
       quality: iv.quality || '',
-      behavior: iv.behavior || '',
+      activity: iv.activity || '',
       lat: iv.lat, lon: iv.lon,
       distance_m: iv.distance_m,
       bearing_to_whale: iv.bearing_to_whale,
@@ -546,17 +571,22 @@ async function exportCSV() {
     });
   }
 
-  for (const b of blows) {
-    const iv = intervalById.get(b.interval_id);
+  for (const b of behaviors) {
+    const iv = b.interval_id ? intervalById.get(b.interval_id) : null;
     rows.push({
-      record_type: 'BLOW',
+      record_type: 'BEHAVIOR',
       ts: b.ts,
+      // Rows migrated from the pre-v2 blows store have no behavior field.
+      behavior: b.behavior || 'blow',
       secs_into_surfacing: iv ? (b.ts - iv.start_ts) / 1000 : '',
       interval_type: iv ? iv.type : '',
+      activity: iv ? (iv.activity || '') : '',
       device_id: b.device_id,
       record_id: b.id,
-      interval_id: b.interval_id,
-      ...focalCols(uuidOf(iv)),
+      interval_id: b.interval_id || '',
+      // Prefer the behaviour's own focal link; fall back to the interval's for
+      // rows migrated from v1, which had no focal_uuid of their own.
+      ...focalCols(b.focal_uuid || uuidOf(iv)),
       ...surfacingCols(iv),
     });
   }
@@ -596,7 +626,7 @@ async function exportCSV() {
 
   // Strict time order. The rank tiebreak keeps a focal ahead of the interval it
   // opens at the same millisecond, and the id keeps ties fully deterministic.
-  const RANK = { FOCAL: 0, INTERVAL: 1, BLOW: 2, EVENT: 3, TRACK: 4 };
+  const RANK = { FOCAL: 0, INTERVAL: 1, BEHAVIOR: 2, EVENT: 3, TRACK: 4 };
   rows.sort((a, b) =>
     a.ts - b.ts ||
     RANK[a.record_type] - RANK[b.record_type] ||
@@ -651,13 +681,13 @@ const App = {
   forceTrackPoint,
   logEvent,
   startFocal,
-  setBehavior,
+  setActivity,
   setWhaleId,
   setFocalId,
   focalIdCollision,
   switchInterval,
   updateCurrentInterval,
-  logBlow,
+  logBehavior,
   countBlows,
   endFocal,
   loadTags,
@@ -668,4 +698,5 @@ const App = {
   surveyCounts,
   clearSurveyData,
   exportCSV,
+  BEHAVIORS,
 };
