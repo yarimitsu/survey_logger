@@ -216,9 +216,12 @@ function wireControls() {
     const out = UI.$('#clear-export-result');
     out.textContent = 'Exporting...';
     try {
-      const { name, rows } = await App.exportCSV();
-      out.textContent = `Saved ${rows} rows to ${name}`;
-      UI.setStatus(`Exported ${rows} rows to ${name}`);
+      // Both files, always. Clearing after exporting only one would silently
+      // discard the other.
+      const { files } = await App.exportCSV();
+      const summary = files.map((f) => `${f.name} (${f.rows} rows)`).join(', ');
+      out.textContent = `Saved ${summary}`;
+      UI.setStatus(`Exported ${summary}`);
     } catch (err) {
       out.textContent = 'Export FAILED: ' + err.message + ' — do not clear.';
       console.error(err);
@@ -238,8 +241,8 @@ function wireControls() {
   // Export / import
   UI.$('#export-json-btn').addEventListener('click', () => App.exportAll());
   UI.$('#export-csv-btn').addEventListener('click', async () => {
-    const { name, rows } = await App.exportCSV();
-    UI.setStatus(`Exported ${rows} rows to ${name}`);
+    const { files } = await App.exportCSV();
+    UI.setStatus('Exported ' + files.map((f) => `${f.name} (${f.rows} rows)`).join(', '));
   });
   UI.$('#import-json-btn').addEventListener('click', () => UI.$('#import-file-input').click());
   UI.$('#import-file-input').addEventListener('change', async (e) => {

@@ -1,6 +1,6 @@
 // app.js — survey logger core logic
 
-const TRACK_INTERVAL_MS = 30000; // minimum spacing between track points (30 s)
+const TRACK_INTERVAL_MS = 10000; // minimum spacing between track points (10 s)
 
 const state = {
   config: null,
@@ -40,8 +40,11 @@ function startPositionWatch() {
   updateGpsUI();
 }
 
-async function maybeLogTrackPoint(p) {
-  if (p.ts - state.lastTrackLogTs < TRACK_INTERVAL_MS) return;
+async function maybeLogTrackPoint(p, force = false) {
+  if (!force && p.ts - state.lastTrackLogTs < TRACK_INTERVAL_MS) return;
+  // Reset the floor on a forced write too. Without this, a run of blows would
+  // write a point per tap AND leave the 10 s cadence ticking underneath it,
+  // doubling track density during the busiest part of a follow.
   state.lastTrackLogTs = p.ts;
   const rec = {
     id: `${state.config.device_id}_${DB.uuid()}`,
@@ -59,9 +62,28 @@ async function maybeLogTrackPoint(p) {
     // off the network for a week can drift minutes, and this is the only way
     // to detect that later. SeaLog keeps both for the same reason.
     gps_time: p.gps_time == null ? null : p.gps_time,
+    // Set on points written because something was logged, rather than because
+    // the 10 s timer came round. Lets a track be thinned back to pure cadence
+    // later without losing the fact that these coincide with an observation.
+    trigger: force ? 'event' : 'cadence',
   };
   await DB.put('track_points', rec);
   drawTrackPoint(rec);
+}
+
+// Drop a track point at the moment something is logged, on top of the 10 s
+// cadence, so every record has a position fixed at its own timestamp rather
+// than interpolated between two cadence points up to 10 s away.
+//
+// The position is the last fix received, not a fresh one — there is no way to
+// ask for a fix synchronously. At 1 Hz off the USB receiver that is under a
+// second stale. The timestamp is the EVENT time, not the fix time, so the
+// forced point sorts alongside the record it accompanies in the export.
+async function forceTrackPoint(ts) {
+  if (!state.trackOn) return;
+  const p = currentPositionOrNull();
+  if (!p) return;
+  await maybeLogTrackPoint({ ...p, ts: ts || Date.now() }, true);
 }
 
 function currentPositionOrNull() {
@@ -88,6 +110,7 @@ async function logEvent(tagId, tagLabel, notes) {
   };
   await DB.put('events', rec);
   drawEventMarker(rec);
+  await forceTrackPoint(rec.ts);
   return rec;
 }
 
@@ -167,6 +190,7 @@ async function startFocal() {
   state.focal = rec;
   state.focalInterval = null;
   state.surfacingNum = 0;
+  await forceTrackPoint(rec.start_ts);
   return rec;
 }
 
@@ -239,6 +263,7 @@ async function switchInterval(type) {
     await DB.put('focal_intervals', prev);
   }
   await DB.put('focal_intervals', rec);
+  await forceTrackPoint(now);
   return rec;
 }
 
@@ -257,6 +282,7 @@ async function logBlow() {
     ts: Date.now(),
   };
   await DB.put('blows', rec);
+  await forceTrackPoint(rec.ts);
   return rec;
 }
 
@@ -275,6 +301,7 @@ async function endFocal() {
     state.focal.end_ts = now;
     await DB.put('focals', state.focal);
   }
+  await forceTrackPoint(now);
   state.focal = null;
   state.focalInterval = null;
   state.surfacingNum = 0;
@@ -382,6 +409,37 @@ function isoOrBlank(ts) {
 // The browser cannot append to a file on disk. Instead every export re-reads the
 // whole local database, so each file is a strict superset of the last one and
 // nothing is lost by keeping only the newest.
+// EVENT and TRACK are the survey log; FOCAL, INTERVAL and BLOW are the follow.
+const SURVEY_TYPES = new Set(['EVENT', 'TRACK']);
+const FOCAL_TYPES = new Set(['FOCAL', 'INTERVAL', 'BLOW']);
+
+const SURVEY_COLUMNS = [
+  'seq', 'record_type', 'ts', 'time_utc',
+  'lat', 'lon', 'gps_source', 'gps_time_utc', 'trigger',
+  'tag_label', 'notes',
+  'focal_id', 'whale_id', 'focal_uuid',
+  'device_label', 'device_id', 'record_id',
+];
+
+const FOCAL_COLUMNS = [
+  'seq', 'record_type', 'ts', 'time_utc',
+  'focal_id', 'whale_id', 'surfacing_num', 'surfacing_id',
+  'interval_type', 'end_ts', 'end_time_utc', 'duration_s',
+  'behavior', 'quality', 'secs_into_surfacing',
+  'lat', 'lon', 'distance_m', 'bearing_to_whale', 'swim_direction',
+  'notes',
+  'device_label', 'device_id', 'record_id', 'interval_id', 'focal_uuid',
+];
+
+function downloadCSV(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function exportCSV() {
   const [events, tracks, intervals, blows, focals] = await Promise.all([
     DB.getAll('events'), DB.getAll('track_points'), DB.getAll('focal_intervals'),
@@ -528,6 +586,7 @@ async function exportCSV() {
       // guessed at: those predate the USB GPS entirely.
       gps_source: t.source || '',
       gps_time_utc: isoOrBlank(t.gps_time),
+      trigger: t.trigger || '',
       device_id: t.device_id,
       record_id: t.id,
       ...focalCols(f ? f.id : ''),
@@ -543,42 +602,52 @@ async function exportCSV() {
     String(a.record_id).localeCompare(String(b.record_id))
   );
 
-  rows.forEach((r, i) => {
-    r.seq = i + 1;
+  rows.forEach((r) => {
     r.time_utc = isoOrBlank(r.ts);
     r.end_time_utc = isoOrBlank(r.end_ts);
     r.device_label = deviceLabelById.get(r.device_id) || '';
   });
 
-  const columns = [
-    'seq', 'record_type', 'ts', 'time_utc',
-    'focal_id', 'whale_id', 'surfacing_num', 'surfacing_id',
-    'interval_type', 'end_ts', 'end_time_utc', 'duration_s',
-    'behavior', 'quality',
-    'lat', 'lon', 'gps_source', 'gps_time_utc',
-    'distance_m', 'bearing_to_whale', 'swim_direction',
-    'tag_label', 'notes', 'secs_into_surfacing',
-    'device_label', 'device_id', 'record_id', 'interval_id', 'focal_uuid',
+  // Two files. The survey log is dominated by track points and event tags; the
+  // focal file by intervals and blows. They are used by different analyses and
+  // at very different row counts, so they are written separately — but both
+  // come out of the one row build above, so surfacing numbering, device-label
+  // stamping and time ordering stay single-source.
+  //
+  // focal_id / focal_uuid are kept in the survey log ON PURPOSE. They are the
+  // only link between the two files: without them there is no way to pull the
+  // vessel track for a given follow.
+  const files = [
+    { key: 'survey_log', types: SURVEY_TYPES, columns: SURVEY_COLUMNS },
+    { key: 'focal_follows', types: FOCAL_TYPES, columns: FOCAL_COLUMNS },
   ];
 
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
-  const name = `survey_log_${state.config.device_label}_${stamp}.csv`;
 
-  const blob = new Blob([toCSV(rows, columns)], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-  return { name, rows: rows.length };
+  const written = [];
+  for (const f of files) {
+    const subset = rows.filter((r) => f.types.has(r.record_type));
+    // seq is per file, so each one stands alone. Row order across the two is
+    // still recoverable from ts.
+    subset.forEach((r, i) => { r.seq = i + 1; });
+    const name = `${f.key}_${state.config.device_label}_${stamp}.csv`;
+    downloadCSV(name, toCSV(subset, f.columns));
+    written.push({ name, rows: subset.length });
+    // Chrome treats a second programmatic download as a popup and can suppress
+    // it. A short gap makes it reliable; the browser may still ask once for
+    // permission to download multiple files.
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { files: written, rows: rows.length };
 }
 
 const App = {
   state,
   startPositionWatch,
+  maybeLogTrackPoint,
+  forceTrackPoint,
   logEvent,
   startFocal,
   setBehavior,

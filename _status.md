@@ -26,12 +26,14 @@ and cost a debugging round. No cache bumping needed during development.
 - Blow button during a dive closes the dive and opens a new surfacing.
 - Interval timer (colour-coded: amber "Down", green "Surface").
 - Notes during a focal, stamped with focal + interval.
-- Track cadence 30 s (floor, not a period — driven by watchPosition callbacks).
+- Track cadence 10 s (floor, not a period — driven by position callbacks), plus
+  a forced point whenever something is logged.
 - Focal labels FocalA/FocalB..., auto-assigned per device.
 - Whale ID field, assignable at any point in a follow.
 - Focal ID editable during a follow, with a warning on duplicate or blank labels.
-- Single cumulative CSV export (survey_log_<device>_<stamp>.csv) replacing the
-  four-file bundle. Long format, one row per record, strict time order.
+- Cumulative CSV export, TWO files per export: survey_log_<device>_<stamp>.csv
+  (EVENT, TRACK) and focal_follows_<device>_<stamp>.csv (FOCAL, INTERVAL,
+  BLOW). Long format, one row per record, strict time order within each.
 - navigator.storage.persist() requested at startup; warns in the status line if
   the browser refuses.
 - "Clear all survey data" button with a typed-CLEAR confirmation, record counts,
@@ -106,6 +108,26 @@ and cost a debugging round. No cache bumping needed during development.
   GPS cannot silently come back as some other authorised device.
 - A silent serial feed, not an exception, is the usual way a track dies. The
   stale watch forces the port back open after 30 s of silence.
+- Track cadence changed 30 s -> 10 s on 2026-09-09 (user request), and a point
+  is now forced on every logged action: event tag, note, focal start/end,
+  interval switch, blow. The `trigger` column says which produced each point,
+  so a track can be thinned back to pure cadence later.
+- A forced point uses the LAST FIX for position but the EVENT time for ts, so
+  it sorts alongside the record it accompanies. There is no way to request a
+  fix synchronously; at 1 Hz off the USB receiver the position is under a
+  second stale.
+- A forced write resets lastTrackLogTs. Otherwise a run of blows would write a
+  point per tap AND leave the cadence ticking underneath, doubling density
+  during the busiest part of a follow.
+- Export split back into two files on 2026-09-09 (user request), reversing the
+  earlier consolidation. One row build feeds both, so surfacing numbering,
+  device-label stamping and time ordering stay single-source.
+- focal_id / focal_uuid are KEPT in the survey log. They are the only link
+  between the two files; without them the vessel track for a given follow
+  cannot be recovered.
+- The clear-data dialog's Export button writes both files. Exporting one and
+  then clearing would silently discard the other.
+- seq is per file. Cross-file order is still recoverable from ts.
 - Focal labels restart at FocalA after a clear. If an old export is later merged
   with a new one, FocalA will appear twice; separate by date or keep the files
   apart.
@@ -134,6 +156,12 @@ and cost a debugging round. No cache bumping needed during development.
   are tested; everything downstream of navigator.serial is not.
 - COM3 at 4800 is assumed from the receiver on hand. The browser's port picker
   lets any port be chosen, but the baud rate is fixed in gps.js (SERIAL_BAUD).
+- Chrome treats the second programmatic download as a popup. There is a 400 ms
+  gap between the two files, but the browser may still ask once for permission
+  to download multiple files. Not yet confirmed in a real browser.
+- At 10 s cadence a 10-hour day is ~3,600 track rows before forced points.
+  loadExistingIntoMap() adds every one to a single polyline at startup; not
+  yet checked for responsiveness across a multi-day survey without a clear.
 - iPad testing needs https or GitHub Pages. `http://<LAN-IP>:8080` is not a
   secure context, so iOS Safari gives neither geolocation nor a service worker.
 - Button-level UI wiring has not been exercised in a browser; verification so
