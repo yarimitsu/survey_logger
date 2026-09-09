@@ -55,8 +55,11 @@ USB receiver already needs.
 
 The click is required by the Web Serial specification — a page cannot open a port
 without a user gesture — so the app cannot connect automatically at startup.
-After the first time, permission persists for that browser profile and the app
-reuses the granted port without showing the picker again.
+After the first time, permission persists for that browser profile. If the GPS
+is the only serial device this browser has been given access to, the app reuses
+it silently; if you have also authorised something else (a CTD, a radio), the
+picker appears each time, because the browser gives no reliable way to tell which
+of several granted ports is the right one without asking.
 
 The button turns green and reads **USB GPS** while the serial feed is live.
 
@@ -71,6 +74,11 @@ hiccup is caught and the port is reopened automatically every 3 seconds. A feed
 that goes silent without erroring — the usual way a track dies mid-survey —
 triggers a warning after 15 seconds and a forced reconnect after 30. Watch the
 status line.
+
+**This reconnect path has not yet been tested against the actual receiver.**
+At the dock, with the app running and the track on, unplug the puck and watch
+the status line, then plug it back in and confirm the track resumes. Five
+minutes, and it is the difference between a claim and a verified behaviour.
 
 **Browser support.** Web Serial is Chrome and Edge on desktop only. On Safari,
 Firefox, or any iPad, the button reads **Device GPS** and the app falls back to

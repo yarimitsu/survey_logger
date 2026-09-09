@@ -99,6 +99,11 @@ and cost a debugging round. No cache bumping needed during development.
   receiver sending both does not double-log, and a GGA-only receiver still works.
 - Invalid-fix sentences (RMC status V, GGA quality 0) are dropped, not logged.
   Some receivers keep filling in the last known position in those sentences.
+- navigator.serial.getPorts() returns every port ever granted to this origin,
+  in no defined order. Reusing granted[0] is only safe when there is exactly
+  one; otherwise the picker is shown. On reconnect, only a port that is the
+  chosen one or matches its USB vendor/product ids is accepted, so a dropped
+  GPS cannot silently come back as some other authorised device.
 - A silent serial feed, not an exception, is the usual way a track dies. The
   stale watch forces the port back open after 30 s of silence.
 - Focal labels restart at FocalA after a clear. If an old export is later merged

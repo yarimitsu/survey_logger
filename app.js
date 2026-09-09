@@ -7,7 +7,6 @@ const state = {
   lastPosition: null,      // {lat, lon, ts}
   trackOn: false,
   lastTrackLogTs: 0,
-  gpsSource: 'none',       // 'device' | 'serial' | 'none'; owned by gps.js
   tags: [],
   map: null,
   trackLine: null,

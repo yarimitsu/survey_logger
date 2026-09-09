@@ -28,7 +28,7 @@ function fmtTime(ts) {
 function updateGpsUI() {
   const btn = $('#gps-btn');
   if (!btn) return;
-  const src = App.state.gpsSource = GPS.activeSource();
+  const src = GPS.activeSource();
   btn.classList.toggle('gps-on', src === 'serial');
   if (src === 'serial') {
     btn.textContent = 'USB GPS';

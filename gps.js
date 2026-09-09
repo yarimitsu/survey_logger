@@ -136,6 +136,7 @@ const gpsState = {
   watchId: null,
   port: null,
   reader: null,
+  selectedPort: null,      // the port the user actually picked, for reconnect matching
   keepReading: false,      // false once the user disconnects on purpose
   reconnectTimer: null,
   staleTimer: null,
@@ -305,12 +306,26 @@ async function closePort() {
   gpsState.port = null;
 }
 
+// getPorts() returns every port ever granted to this origin, in no defined
+// order. A laptop that has also authorised a CTD, a radio, or an Arduino would
+// otherwise have its GPS track silently reconnect to the wrong device: the
+// status line would say "connected at 4800 baud" and no fix would ever arrive.
+// USB vendor/product ids identify the receiver the user actually picked.
+function sameDevice(a, b) {
+  if (!a || !b || !a.getInfo || !b.getInfo) return false;
+  const x = a.getInfo();
+  const y = b.getInfo();
+  if (x.usbVendorId == null || y.usbVendorId == null) return false;
+  return x.usbVendorId === y.usbVendorId && x.usbProductId === y.usbProductId;
+}
+
 // The retry loop. `keepReading` stays true until the user disconnects on
 // purpose, so an unplug-and-replug, a sleep/wake, or a driver hiccup recovers
 // on its own. Permission to use the port survives the drop, so no second
 // click is needed — navigator.serial.getPorts() returns it without a gesture.
 async function serialSession(port) {
   gpsState.keepReading = true;
+  gpsState.selectedPort = port;
   while (gpsState.keepReading) {
     try {
       await runPort(port);
@@ -323,10 +338,13 @@ async function serialSession(port) {
     await closePort();
     if (!gpsState.keepReading) break;
     await new Promise((r) => { gpsState.reconnectTimer = setTimeout(r, RECONNECT_DELAY_MS); });
-    // The port object is invalidated by a physical unplug, so re-fetch a
-    // granted port rather than reusing the stale handle.
+    // A physical unplug can invalidate the port handle, so look for the
+    // receiver coming back. Only a port that IS the chosen one or matches its
+    // USB ids is accepted; if it is not back yet, keep retrying the original
+    // handle rather than opening whatever else happens to be authorised.
     const granted = await navigator.serial.getPorts();
-    if (granted.length) port = granted[0];
+    const match = granted.find((p) => p === gpsState.selectedPort || sameDevice(p, gpsState.selectedPort));
+    if (match) port = match;
   }
   stopStaleWatch();
   await closePort();
@@ -341,10 +359,12 @@ async function connectSerial() {
     return false;
   }
   try {
-    // Reuse a port already granted in an earlier session, so the picker only
-    // appears the first time on a given machine.
+    // Reuse a port granted in an earlier session so the picker does not appear
+    // every time — but only when there is exactly one. getPorts() has no
+    // defined order, so with several authorised devices "the first one" is a
+    // coin flip and the wrong guess is silent. With more than one, ask.
     const granted = await navigator.serial.getPorts();
-    const port = granted.length ? granted[0] : await navigator.serial.requestPort();
+    const port = granted.length === 1 ? granted[0] : await navigator.serial.requestPort();
     serialSession(port);   // deliberately not awaited: it runs for the survey
     return true;
   } catch (err) {
