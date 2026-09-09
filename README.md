@@ -137,8 +137,8 @@ default; if not, the app is online-only and the status line says so.
 
 The script prints the tile count per zoom and samples a few tiles to estimate the
 download before asking to proceed. For the default area and zoom range that is
-**12,377 tiles, roughly 250 MB**, and takes around an hour and a half at the
-built-in request rate. It skips tiles already on disk, so an interrupted run
+**12,377 tiles, roughly 250 MB**. Measured rate is about 83 tiles a minute, so
+budget **two and a half hours** and start it the night before. It skips tiles already on disk, so an interrupted run
 resumes where it stopped and a rerun after widening the box only fetches the new
 edges.
 
