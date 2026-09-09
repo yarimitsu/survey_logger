@@ -178,6 +178,34 @@ build().then(async () => {
   ok('both blows exported', blows.length === 2, blows.length);
   ok('blows carry surfacing_id', blows.every((r) => r.surfacing_id === 'FocalA-S1'), blows.map((r) => r.surfacing_id));
 
+  // ---------- a survey day with no focal follows ----------
+  // The likely first day out, and the clear-data dialog exports on an empty
+  // database too. Both files must still be written, with headers, or the
+  // missing one reads as "the export failed" rather than "nothing to report".
+  for (const k of ['focals', 'focal_intervals', 'blows']) stores[k].length = 0;
+  saved.length = 0;
+  const noFocal = await App.exportCSV();
+  ok('no follows: still two files', saved.length === 2, saved.map((f) => f.name));
+  const nf = parse(saved[1].text);
+  ok('no follows: focal file has a header row',
+     saved[1].text.trim().split('\n')[0].startsWith('seq,record_type'),
+     saved[1].text.slice(0, 40));
+  ok('no follows: focal file has zero data rows', nf.rows.length === 0, nf.rows.length);
+  ok('no follows: survey log still populated',
+     parse(saved[0].text).rows.length === noFocal.rows, noFocal.rows);
+
+  // ---------- a completely empty database ----------
+  for (const k of Object.keys(stores)) stores[k].length = 0;
+  saved.length = 0;
+  const empty = await App.exportCSV();
+  ok('empty db: still two files', saved.length === 2, saved.map((f) => f.name));
+  ok('empty db: both files are header-only',
+     saved.every((f) => f.text.trim().split('\n').length === 1),
+     saved.map((f) => f.text.trim().split('\n').length));
+  ok('empty db: reports zero rows',
+     empty.rows === 0 && empty.files.every((f) => f.rows === 0),
+     [empty.rows, empty.files.map((f) => f.rows)]);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }).catch((e) => { console.error(e); process.exit(1); });

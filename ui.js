@@ -1,6 +1,8 @@
 // ui.js — DOM rendering and map drawing. Talks to App/DB, no business logic here.
 
-// Prince William Sound. Matches the default bbox in tools/fetch_tiles.py.
+// Opening view: the middle of Prince William Sound. This is a view point only —
+// it is deliberately NOT the centre of the cached bbox, which extends south past
+// Montague Island into the Gulf and would open the map on open water.
 const PWS_CENTER = [60.65, -147.1];
 
 function $(sel) { return document.querySelector(sel); }
@@ -119,10 +121,15 @@ async function initMap() {
   if (manifest) {
     for (const [key, info] of Object.entries(manifest.layers)) {
       bases[`${info.title || key} (offline)`] = L.tileLayer(`tiles/${key}/{z}/{x}/{y}.png`, {
-        minZoom: info.minzoom,
-        maxZoom: info.maxzoom,
-        // Show the nearest cached zoom stretched rather than nothing at all when
-        // zoomed past what was downloaded.
+        // minZoom/maxZoom are the zooms the layer will DISPLAY at;
+        // min/maxNativeZoom are the zooms it actually has files for. Setting the
+        // first pair to the cached range is the obvious-looking mistake: it
+        // hides the layer entirely outside that range, so opening the map at a
+        // zoom the cache does not contain gives a blank grey page. Leave display
+        // wide open and let the native bounds upscale the nearest cached tile.
+        minZoom: 0,
+        maxZoom: 18,
+        minNativeZoom: info.minzoom,
         maxNativeZoom: info.maxzoom,
         attribution: (info.attribution || '') + ' (cached)',
       });
@@ -137,14 +144,24 @@ async function initMap() {
     }),
   };
 
+  // Cached first if there is one, so a boat with no signal opens to a usable
+  // map rather than a grey grid.
   Object.values(bases)[0].addTo(map);
   L.control.layers(bases, overlays, { position: 'topright' }).addTo(map);
 
   App.state.trackLine = L.polyline([], { color: '#3ddc97', weight: 3 }).addTo(map);
   App.state.tileManifest = manifest;
-  setStatus(manifest
-    ? `Ready. Offline tiles: ${Object.keys(manifest.layers).join(', ')}.`
-    : 'Ready. No cached tiles — map needs a connection. See README.');
+  // Say what the cache actually holds, not just that it exists. A run of
+  // fetch_tiles.py that is still going, or was interrupted, leaves a real
+  // manifest describing a smaller area than expected, and silently showing that
+  // smaller area is how you find out at sea instead of at the dock.
+  if (manifest) {
+    const parts = Object.entries(manifest.layers).map(([k, i]) =>
+      `${k} z${i.minzoom}-${i.maxzoom}, ${i.tiles} tiles${i.complete === false ? ' (INCOMPLETE)' : ''}`);
+    setStatus(`Ready. Cached: ${parts.join('; ')}.`);
+  } else {
+    setStatus('Ready. No cached tiles — the map needs a connection. See README.');
+  }
 }
 
 function drawTrackPoint(rec) {

@@ -50,6 +50,8 @@ and cost a debugging round. No cache bumping needed during development.
 - tools/fetch_tiles.py: downloads tiles to tiles/<layer>/{z}/{x}/{y}.png and
   writes tiles/manifest.json. App reads the manifest at startup and prefers
   cached layers when present.
+- tools/check_static.py: ids, namespace exports, script order, service worker
+  shell list, and NOAA_LAYERS agreement between ui.js and the fetcher.
 - test_gps.js: 39 assertions on NMEA parsing and the sentence-to-fix pipeline.
 
 ## Key decisions
@@ -88,6 +90,17 @@ and cost a debugging round. No cache bumping needed during development.
   meta store (device id and label) and the tag list, which are configuration
   rather than observations. Clear is blocked while a focal follow is open, and
   reloads the page afterwards rather than unwinding map layers by hand.
+- The offline tile layer sets minZoom 0 / maxZoom 18 for DISPLAY and
+  min/maxNativeZoom to the cached range. Setting minZoom/maxZoom to the cached
+  range instead is the obvious-looking mistake and hides the layer entirely
+  outside it, so opening the map at an uncached zoom gives a blank grey page.
+- The fetcher writes the manifest at the START of a run and every 500 tiles, not
+  only at the end. A manifest written only on completion leaves the app
+  describing the PREVIOUS run's area for the hours the new one takes - which is
+  exactly how the app came to show a 90-tile test cache on 2026-09-09.
+- The manifest carries `complete`, and the status line says INCOMPLETE when a
+  run was interrupted. Silently showing a smaller area than expected is how you
+  find out at sea instead of at the dock.
 - Offline tiles go to DISK and are served from localhost, not left to the
   service worker's runtime cache. The SW cache needs the area panned at every
   zoom while online and can be evicted; disk tiles cannot. The SW path remains

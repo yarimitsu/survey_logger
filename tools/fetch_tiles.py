@@ -36,7 +36,7 @@ import urllib.error
 import urllib.request
 
 # Prince William Sound and its Gulf of Alaska approaches. Order is
-# south, west, north, east. Matches PWS_CENTER in ui.js.
+# south, west, north, east.
 #
 # The south edge is 59.30, not the ~59.95 that a tight box around the Sound
 # suggests: Montague Island runs down to Cape Cleare at 59.77, and stopping
@@ -154,6 +154,55 @@ def sample_mean_bytes(source, plan, k=8):
     return total / len(got), got
 
 
+def write_manifest(out_dir, source, bbox, zmin, zmax):
+    """Rewrite manifest.json from what is actually on disk.
+
+    Called at the start of a run, periodically during it, and at the end. The
+    app reads this at startup, so a manifest that is only written on completion
+    leaves the map describing the PREVIOUS run for as long as this one takes -
+    which, for a 12,000 tile fetch, is hours of the app showing a stale and much
+    smaller cached area.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    mpath = os.path.join(out_dir, "manifest.json")
+    manifest = {"layers": {}}
+    if os.path.exists(mpath):
+        try:
+            with io.open(mpath, encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (ValueError, OSError):
+            pass                          # a corrupt manifest is replaced, not patched
+    manifest.setdefault("layers", {})
+
+    on_disk, zooms = 0, []
+    for z in range(zmin, zmax + 1):
+        zdir = os.path.join(out_dir, source, str(z))
+        c = sum(len(files) for _, _, files in os.walk(zdir)) if os.path.isdir(zdir) else 0
+        if c:
+            zooms.append(z)
+            on_disk += c
+    if not zooms:
+        return 0, None
+
+    manifest["layers"][source] = {
+        "title": SOURCES[source]["title"],
+        "attribution": SOURCES[source]["attribution"],
+        "minzoom": min(zooms),
+        "maxzoom": max(zooms),
+        "tiles": on_disk,
+        "bbox": list(bbox),
+        "complete": on_disk >= expected_tiles(bbox, zmin, zmax),
+        "fetched": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    with io.open(mpath, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    return on_disk, (min(zooms), max(zooms))
+
+
+def expected_tiles(bbox, zmin, zmax):
+    return sum(len(list(tiles_for(bbox, z))) for z in range(zmin, zmax + 1))
+
+
 def write_tile(out_dir, source, z, x, y, data):
     d = os.path.join(out_dir, source, str(z), str(x))
     os.makedirs(d, exist_ok=True)
@@ -231,6 +280,11 @@ def main():
         for (z, x, y), data in samples:
             write_tile(args.out, source, z, x, y, data)
 
+        # Publish the target area immediately. Until this run finishes the
+        # manifest would otherwise still describe whatever the last run cached,
+        # and the app would quietly show that smaller area instead.
+        write_manifest(args.out, source, bbox, zmin, zmax)
+
         delay = SOURCES[source]["delay"]
         done = failed = 0
         t0 = time.time()
@@ -253,45 +307,19 @@ def main():
                 rate = done / max(1e-6, time.time() - t0)
                 print(f"  {i:,}/{len(plan):,}  fetched {done:,}  failed {failed:,}"
                       f"  {rate:.1f}/s")
+            if done and done % 500 == 0:
+                write_manifest(args.out, source, bbox, zmin, zmax)
             time.sleep(delay)
         print(f"\nFetched {done:,} tiles, {failed:,} failed.")
 
-    # Rewrite the manifest from what is actually on disk, so a partial or
-    # interrupted run still produces a manifest that matches reality.
-    os.makedirs(args.out, exist_ok=True)
-    mpath = os.path.join(args.out, "manifest.json")
-    manifest = {"layers": {}}
-    if os.path.exists(mpath):
-        try:
-            with io.open(mpath, encoding="utf-8") as f:
-                manifest = json.load(f)
-        except (ValueError, OSError):
-            pass                              # a corrupt manifest is replaced, not patched
-    manifest.setdefault("layers", {})
-
-    on_disk, zooms = 0, []
-    for z in range(zmin, zmax + 1):
-        zdir = os.path.join(args.out, source, str(z))
-        c = sum(len(files) for _, _, files in os.walk(zdir)) if os.path.isdir(zdir) else 0
-        if c:
-            zooms.append(z)
-            on_disk += c
-    if not zooms:
+    on_disk, zr = write_manifest(args.out, source, bbox, zmin, zmax)
+    if not zr:
         print("No tiles on disk for this source; manifest not updated.")
         return 1
-
-    manifest["layers"][source] = {
-        "title": SOURCES[source]["title"],
-        "attribution": SOURCES[source]["attribution"],
-        "minzoom": min(zooms),
-        "maxzoom": max(zooms),
-        "tiles": on_disk,
-        "bbox": list(bbox),
-        "fetched": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    with io.open(mpath, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-    print(f"Wrote {mpath}: {on_disk:,} tiles for '{source}', z{min(zooms)}-{max(zooms)}.")
+    total = expected_tiles(bbox, zmin, zmax)
+    print(f"Wrote {os.path.join(args.out, 'manifest.json')}: {on_disk:,} tiles for "
+          f"'{source}', z{zr[0]}-{zr[1]}"
+          f"{'' if on_disk >= total else f' (INCOMPLETE: {total - on_disk:,} missing - rerun to resume)'}.")
     return 0
 
 

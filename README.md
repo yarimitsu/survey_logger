@@ -247,6 +247,7 @@ two iPads will both produce `FocalA` — so use `device_label` to tell them apar
 
     node test_gps.js
     node test_export.js
+    python tools/check_static.py
 
 `test_gps.js` - 39 assertions covering NMEA parsing: checksums against canonical published
 sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere signs
@@ -259,6 +260,15 @@ against an in-memory database and checks that no row is lost or duplicated acros
 the two files, that the cross-file join survives, that the cadence floor holds
 between forced points, that forced points carry the event timestamp, and that
 per-file `seq`, time order, whale-ID joining and surfacing numbering are correct.
+
+`tools/check_static.py` - there is no build step and no module system here, so
+nothing otherwise catches a renamed function or a selector pointing at an id that
+no longer exists. It checks that every `$('#id')` matches an element in
+`index.html`, that every `UI.`/`GPS.`/`App.`/`DB.` reference is actually exported,
+that scripts load in dependency order, that every local asset is in the service
+worker's shell list, and that `NOAA_LAYERS` is identical in `ui.js` and
+`tools/fetch_tiles.py` - a mismatch there would make the cached chart silently
+differ from the online one, which you would not discover until you were offline.
 
 There is no automated test of the browser UI wiring or the map layers; those are
 exercised by hand.
@@ -278,6 +288,7 @@ exercised by hand.
     test_gps.js     NMEA parser test harness
     test_export.js  CSV export split test harness
     tools/          fetch_tiles.py - offline tile downloader
+                    check_static.py - cross-file consistency checks
     tiles/          downloaded tiles (gitignored; run the fetcher)
     _status.md      running project status, decisions, and open issues
 
