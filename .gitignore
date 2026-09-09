@@ -1,0 +1,9 @@
+# Exported survey data — the CSV/JSON exports are field data, not source.
+survey_log_*.csv
+survey_export_*.json
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/

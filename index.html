@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a0e12">
+<title>Survey Logger</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- First-run device label -->
+<div id="setup-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>Name this device</h2>
+    <p class="muted">Used to keep records from each iPad separate until you merge them later. e.g. "iPad-1"</p>
+    <input id="setup-input" type="text" placeholder="iPad-1" autocomplete="off">
+    <button id="setup-save" class="primary-btn">Start logging</button>
+  </div>
+</div>
+
+<!-- Header / status bar -->
+<header id="topbar">
+  <div id="device-label">&mdash;</div>
+  <div id="coord-line">&mdash;, &mdash;</div>
+  <button id="gps-btn" class="gps-off">Connect GPS</button>
+  <button id="track-toggle" class="track-off">Start Track</button>
+</header>
+
+<div id="status-line">Ready.</div>
+
+<!-- Map is the main view; every control lives in the sidebar. -->
+<div id="workspace">
+  <aside id="sidebar">
+    <div id="tabs">
+      <button class="tab-btn active" data-tab="log">Log</button>
+      <button class="tab-btn" data-tab="focal">Focal</button>
+    </div>
+
+    <!-- ---------- Log tab ---------- -->
+    <div id="tab-log" class="tab-panel">
+      <div id="tag-grid"></div>
+      <button id="note-btn" class="wide-btn">+ Note</button>
+      <button id="focal-btn" class="wide-btn focal">Start Focal Follow</button>
+
+      <div class="section-label">Data</div>
+      <button id="export-csv-btn" class="wide-btn export">Export CSV</button>
+      <div class="hint">One file with everything, in time order. Each export
+        contains all data recorded so far, so the newest file replaces the last.</div>
+      <div class="link-col">
+        <button id="manage-tags-btn" class="link-btn">Manage tags</button>
+        <button id="export-json-btn" class="link-btn">Export (merge file)</button>
+        <button id="import-json-btn" class="link-btn">Import (merge file)</button>
+      </div>
+
+      <div class="section-label">Start a new survey</div>
+      <button id="clear-data-btn" class="wide-btn danger">Clear all survey data</button>
+      <input id="import-file-input" type="file" accept="application/json" class="hidden">
+    </div>
+
+    <!-- ---------- Focal tab ---------- -->
+    <div id="tab-focal" class="tab-panel hidden">
+
+      <div id="focal-idle">
+        <p class="muted">No focal follow running. Start one from the Log tab.</p>
+      </div>
+
+      <div id="focal-active" class="hidden">
+        <h2>Focal Follow <span id="focal-label"></span></h2>
+
+        <div id="interval-timer">&mdash;</div>
+        <div id="surfacing-line">&mdash;</div>
+
+        <!-- Focal-scoped, not interval-scoped: deliberately outside the
+             .field-row block below, which is cleared on every interval change. -->
+        <div class="section-label">Focal ID <span class="muted">&mdash; auto-assigned, editable</span></div>
+        <input id="field-focal-id" class="wide-input" type="text" autocomplete="off" placeholder="FocalA">
+        <div id="focal-id-warning" class="warn"></div>
+
+        <div class="section-label">Whale ID <span class="muted">&mdash; blank if not identified</span></div>
+        <input id="field-whale-id" class="wide-input" type="text" placeholder="e.g. HW-2026-014" autocomplete="off">
+
+        <div id="blow-section">
+          <div class="section-label">Blows this surfacing</div>
+          <button id="blow-btn" class="blow-btn">+1 Blow (<span id="blow-count">0</span>)</button>
+          <div class="hint">Tap on first sight &mdash; during a dive this closes the dive and opens a new surfacing.</div>
+        </div>
+
+        <div class="section-label">Interval</div>
+        <div class="segmented">
+          <button class="interval-btn" data-type="SURFACE">Surface</button>
+          <button class="interval-btn" data-type="DIVE">Dive</button>
+          <button class="interval-btn" data-type="UNCLEAR">Unclear</button>
+        </div>
+
+        <div class="section-label">Behavior</div>
+        <div class="segmented">
+          <button class="behavior-btn active" data-behavior="unknown">Unknown</button>
+          <button class="behavior-btn" data-behavior="transit">Transit</button>
+          <button class="behavior-btn" data-behavior="foraging">Foraging</button>
+        </div>
+
+        <div class="section-label">Interval quality</div>
+        <div class="segmented">
+          <button id="quality-good" class="quality-btn active" data-q="good">Good</button>
+          <button id="quality-bad" class="quality-btn" data-q="bad">Bad</button>
+        </div>
+
+        <div class="section-label">Optional &mdash; this surfacing only</div>
+        <div class="field-row">
+          <label>Distance (m)<input id="field-distance" type="number" inputmode="numeric"></label>
+          <label>Bearing (&deg;)<input id="field-bearing" type="number" inputmode="numeric" min="0" max="360"></label>
+          <label>Swim direction<input id="field-direction" type="text" placeholder="e.g. NW, or 315&deg;"></label>
+        </div>
+
+        <button id="focal-note-btn" class="wide-btn">+ Note</button>
+        <button id="end-focal-btn" class="wide-btn danger">End Focal Follow</button>
+      </div>
+
+    </div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<!-- Notes modal (used for tag logging + free note) -->
+<div id="notes-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="notes-modal-title">Note</h2>
+    <textarea id="notes-input" rows="4" placeholder="Optional notes..."></textarea>
+    <div class="modal-actions">
+      <button id="notes-cancel" class="link-btn">Cancel</button>
+      <button id="notes-save" class="primary-btn">Log it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear-data confirmation. Deliberately more friction than a browser confirm():
+     the local database is the only copy until a file is saved. -->
+<div id="clear-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>Clear all survey data</h2>
+    <p class="muted">Permanently deletes the records below from this device.
+      Your device name and tag list are kept.</p>
+
+    <div id="clear-counts"></div>
+    <div class="clear-total">Total records: <strong id="clear-total">0</strong></div>
+
+    <div class="hint">This cannot be undone, and the database on this device is
+      the only copy until you save a file. Export first unless you already have.</div>
+
+    <button id="clear-export-btn" class="wide-btn export">Export CSV now</button>
+    <div id="clear-export-result" class="hint"></div>
+
+    <div class="section-label">Type CLEAR to confirm</div>
+    <input id="clear-input" class="wide-input" type="text" autocomplete="off" placeholder="CLEAR">
+
+    <div class="modal-actions">
+      <button id="clear-cancel" class="link-btn">Cancel</button>
+      <button id="clear-confirm" class="wide-btn danger" disabled>Delete permanently</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tag manager modal -->
+<div id="tag-manager-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2>Manage Tags</h2>
+    <div id="tag-list"></div>
+    <div class="field-row">
+      <input id="new-tag-input" type="text" placeholder="New tag name">
+      <button id="add-tag-btn" class="primary-btn">Add</button>
+    </div>
+    <button id="tag-manager-close" class="link-btn">Done</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="db.js"></script>
+<script src="gps.js"></script>
+<script src="app.js"></script>
+<script src="ui.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

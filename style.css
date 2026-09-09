@@ -1,0 +1,363 @@
+:root {
+  --bg: #0a0e12;
+  --panel: #121820;
+  --panel-2: #1a222c;
+  --text: #e8edf2;
+  --text-dim: #7c8a99;
+  --accent: #3ddc97;
+  --amber: #ff9f43;
+  --danger: #ff5d5d;
+  --border: #223040;
+  /* iOS minimum touch target. These get used with wet hands on deck, so nothing
+     interactive goes below this however tight the layout gets. */
+  --tap: 44px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* topbar / status / workspace; the workspace row takes all remaining height so
+   the map fills the window. */
+body {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100vh;
+  height: 100dvh;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  padding-top: max(8px, env(safe-area-inset-top));
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+#device-label { font-weight: 600; color: var(--text-dim); font-size: 13px; }
+#coord-line { font-size: 15px; letter-spacing: 0.3px; }
+
+button { font-family: inherit; border: none; cursor: pointer; }
+
+#track-toggle {
+  min-height: var(--tap);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 14px;
+}
+#track-toggle.track-off { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+
+/* Same size and shape as the track toggle: both are one-tap controls that
+   have to be hittable on a moving boat. */
+#gps-btn {
+  min-height: 44px; padding: 0 14px; border-radius: 8px;
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+}
+#gps-btn.gps-on { background: var(--accent); color: #06120c; border-color: transparent; }
+#track-toggle.track-on { background: var(--accent); color: #06120c; }
+
+#status-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------- workspace: sidebar + map ---------- */
+
+#workspace {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  min-height: 0;
+}
+
+#sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  /* scroll, not auto: the Log and Focal tabs differ in height, and a scrollbar
+     appearing on only one would shift the map cell width without Leaflet
+     noticing, leaving a grey strip down the side. */
+  overflow-y: scroll;
+  min-height: 0;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 900px) {
+  #workspace { grid-template-columns: 260px 1fr; }
+}
+
+#map {
+  min-height: 0;
+  background: #0d1218;
+  /* Creates a stacking context so Leaflet internal panes (z-index 400) and
+     controls (800) stay below the modals instead of painting over them. */
+  position: relative;
+  z-index: 0;
+}
+
+/* ---------- sidebar tabs ---------- */
+
+#tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tab-btn {
+  flex: 1;
+  min-height: 38px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 700;
+}
+.tab-btn.active { background: var(--border); color: var(--text); }
+
+/* ---------- log tab ---------- */
+
+#tag-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tag-btn {
+  min-height: var(--tap);
+  padding: 8px 6px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--tag-color, var(--border));
+  border-left: 4px solid var(--tag-color, var(--border));
+  font-size: 13px;
+  font-weight: 600;
+}
+.tag-btn:active { background: var(--border); }
+
+.wide-btn {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.wide-btn.focal { background: var(--amber); color: #251500; border: none; }
+.wide-btn.danger { background: var(--danger); color: #250505; border: none; }
+.wide-btn.export { background: var(--accent); color: #06120c; border: none; }
+
+.link-col { display: flex; flex-direction: column; align-items: flex-start; }
+.link-btn {
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 7px 2px;
+  text-decoration: underline;
+}
+.link-btn.danger { color: var(--danger); }
+
+.small-btn {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+.small-btn.danger { color: var(--danger); }
+
+/* ---------- focal tab ---------- */
+
+#focal-active h2 { margin: 0 0 8px; font-size: 16px; color: var(--amber); }
+#focal-label { color: var(--text); font-weight: 800; }
+
+/* Elapsed time in the current interval, colour-coded so a dive reads at a glance. */
+#interval-timer {
+  font-size: 26px;
+  font-weight: 800;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+#interval-timer[data-type="SURFACE"] { color: var(--accent); border-color: var(--accent); }
+#interval-timer[data-type="DIVE"] { color: var(--amber); border-color: var(--amber); }
+
+#surfacing-line {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 5px;
+}
+
+.section-label { font-size: 11px; color: var(--text-dim); margin: 10px 0 5px; }
+
+.segmented { display: flex; gap: 5px; }
+.segmented button {
+  flex: 1;
+  min-height: 40px;
+  padding: 6px 4px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+}
+.behavior-btn.active { background: var(--amber); color: #251500; border-color: var(--amber); }
+.interval-btn.active { background: var(--accent); color: #06120c; border-color: var(--accent); }
+.quality-btn.active { background: var(--text); color: #0a0e12; }
+
+/* Deliberately the largest control in the app: the most repeated and most
+   time-critical tap in a follow. */
+.blow-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #06120c;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+
+.warn { font-size: 11px; line-height: 1.4; }
+.warn:not(:empty) { color: var(--amber); margin-top: 6px; }
+
+.wide-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.modal-actions .wide-btn { display: inline-block; width: auto; margin-bottom: 0; }
+#clear-export-result:not(:empty) { color: var(--accent); margin-top: 8px; }
+
+#clear-counts { margin: 10px 0 0; }
+.clear-total {
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+.wide-input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+}
+
+.field-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.field-row label {
+  flex: 1;
+  min-width: 88px;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.field-row input {
+  min-height: 38px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+}
+
+#focal-note-btn { margin-top: 12px; }
+
+/* ---------- modals ---------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+.modal.hidden { display: none; }
+
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  width: 100%;
+  max-width: 420px;
+}
+.modal-box h2 { margin-top: 0; font-size: 18px; }
+.muted { color: var(--text-dim); font-size: 12px; }
+
+.modal-box input[type="text"],
+.modal-box textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 15px;
+  margin: 8px 0;
+  font-family: inherit;
+}
+
+.primary-btn {
+  min-height: var(--tap);
+  background: var(--accent);
+  color: #06120c;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+#tag-list { margin: 10px 0; max-height: 240px; overflow-y: auto; }
+.tag-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.hidden { display: none !important; }
+
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }

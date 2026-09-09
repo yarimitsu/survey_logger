@@ -1,0 +1,135 @@
+# Survey Logger — status
+
+Last updated: 2026-09-09
+
+## How to run
+
+    python -m http.server 8080 --bind 127.0.0.1
+    # open http://localhost:8080/
+
+Must be served over http, not opened as file://. Service workers refuse to
+register over file://, and OSM tiles 403 without a referer.
+
+The service worker is DISABLED on localhost/127.0.0.1 (see main.js). Cache-first
+is right in the field and wrong while iterating: it served two-round-old files
+and cost a debugging round. No cache bumping needed during development.
+
+## Completed
+
+- Serve-locally workflow; map tiles and service worker both working.
+- Modal stacking fix: `#map` gets `position: relative; z-index: 0` so Leaflet's
+  panes (400) and controls (800) stop painting over `.modal` (50).
+- Service worker install fixed — `SHELL_FILES` had two icon files that do not
+  exist, and `cache.addAll()` rejects atomically on any 404.
+- Focal follow opens a SURFACE interval immediately, so the blow button is
+  present the moment the panel opens.
+- Blow button during a dive closes the dive and opens a new surfacing.
+- Interval timer (colour-coded: amber "Down", green "Surface").
+- Notes during a focal, stamped with focal + interval.
+- Track cadence 30 s (floor, not a period — driven by watchPosition callbacks).
+- Focal labels FocalA/FocalB..., auto-assigned per device.
+- Whale ID field, assignable at any point in a follow.
+- Focal ID editable during a follow, with a warning on duplicate or blank labels.
+- Single cumulative CSV export (survey_log_<device>_<stamp>.csv) replacing the
+  four-file bundle. Long format, one row per record, strict time order.
+- navigator.storage.persist() requested at startup; warns in the status line if
+  the browser refuses.
+- "Clear all survey data" button with a typed-CLEAR confirmation, record counts,
+  and an Export CSV button inside the confirmation dialog.
+- Layout: map is the main view; all controls in a left sidebar with Log/Focal
+  tabs. Buttons at the 44px iOS touch minimum.
+- Sequential surfacing numbers within each focal (surfacing_num, surfacing_id).
+- USB GPS on COM3 at 4800 baud, read in-page via the Web Serial API (gps.js).
+  Auto-reconnect on drop, forced port reopen on a silent feed.
+- gps_source / gps_time_utc columns on TRACK rows.
+- README.md.
+- test_gps.js: 39 assertions on NMEA parsing and the sentence-to-fix pipeline.
+
+## Key decisions
+
+- `focal_id` holds the human label ("FocalA"); the UUID join key is `focal_uuid`.
+- `focal_id` / `whale_id` are joined onto rows AT EXPORT, not copied at write
+  time. This is what lets a whale ID assigned late in a follow reach every blow
+  and interval already recorded under it. Do not move this to write time.
+- `switchInterval()` assigns `state.focalInterval` before awaiting the IndexedDB
+  write, so a rapid second blow tap cannot file its blow against the closed dive.
+- Blow count is incremented locally on tap; `countBlows()` scans the whole store
+  and must not sit between the tap and the number changing.
+- Focal labels are per-device. Two iPads will both produce "FocalA";
+  `device_label` on the focal record disambiguates after a merge.
+- Dive duration is measured to first blow, not to first visual surfacing.
+- Starting a focal follow auto-enables track logging (user decision, 2026-09-07).
+  It stays on after the follow ends until toggled off.
+- surfacing_num is DERIVED at export from interval order within a focal, not
+  stored. Single source of truth, and it applies to intervals recorded before
+  the concept existed. App.state.surfacingNum is display-only.
+- Sidebar uses overflow-y: scroll, not auto. A scrollbar appearing on one tab
+  and not the other would resize the map cell without Leaflet noticing.
+- 44px is a floor, not a preference. Going below it needs a density toggle.
+- The browser CANNOT append to a file on disk. Each export re-reads the whole
+  database, so every file is a strict superset of the last and only the newest
+  needs keeping. IndexedDB is therefore the accumulator and the single point of
+  failure, which is why persist() matters.
+- Export is sorted strictly by ts. Focal blocks come out contiguous for free,
+  because one device can only run one follow at a time. No grouping logic.
+- `ts` means start time on INTERVAL and FOCAL rows, event time on the rest.
+- Track points are assigned to a focal by timestamp window, same device only.
+  Focals with no end_ts are skipped rather than allowed to swallow every later
+  track point.
+- JSON merge export is unchanged; it serves the multi-device merge path.
+- Clear wipes events, track_points, focals, focal_intervals, blows. It KEEPS the
+  meta store (device id and label) and the tag list, which are configuration
+  rather than observations. Clear is blocked while a focal follow is open, and
+  reloads the page afterwards rather than unwinding map layers by hand.
+- Position sources live in gps.js behind one fix shape {lat, lon, ts, source,
+  gps_time}. app.js does not know which source is running. Adding a third source
+  later (a NMEA-over-TCP feed from a vessel network, say) should not touch app.js.
+- Only ONE source is live at a time. Connecting serial stops the geolocation
+  watch. Two independent position streams written into one track store produce a
+  line that zigzags between them and cannot be disentangled afterwards.
+- Web Serial needs a secure context. http://localhost qualifies, http://<LAN-IP>
+  does not. Field procedure on the laptop is localhost, decided 2026-09-09.
+- Track ts stays on the DEVICE clock, not GPS time, so track points remain
+  joinable to every other record type by timestamp window. GPS time is kept
+  alongside in gps_time. SeaLog stores both for the same reason.
+- Talker ID is ignored; the sentence type is the last three characters. Matching
+  the literal $GPRMC would silently log nothing from a $GN receiver, which is
+  most modern USB pucks.
+- RMC is preferred over GGA. GGA is used only after RMC has been quiet 5 s, so a
+  receiver sending both does not double-log, and a GGA-only receiver still works.
+- Invalid-fix sentences (RMC status V, GGA quality 0) are dropped, not logged.
+  Some receivers keep filling in the last known position in those sentences.
+- A silent serial feed, not an exception, is the usual way a track dies. The
+  stale watch forces the port back open after 30 s of silence.
+- Focal labels restart at FocalA after a clear. If an old export is later merged
+  with a new one, FocalA will appear twice; separate by date or keep the files
+  apart.
+
+## Outstanding / known issues
+
+- Whale ID and focal ID can only be edited while the follow is open. No post-hoc
+  editing of a closed focal (photo-ID often happens after the encounter). This is
+  the obvious next feature: a focal list with editable ID fields.
+- Auto-numbering parses labels as Focal + optional separator + 1-2 letters,
+  case-insensitively (FOCAL_LABEL_RE in app.js). A rename therefore stays in the
+  sequence: "Focal D" makes the next one "Focal E", inheriting the separator and
+  casing of the highest-numbered label. Names that are not a position in a
+  sequence ("FocalTest") drop out. Two letters max, so AA..ZZ covers 702 follows.
+- Next label is always max+1 over parseable labels, never most-recent+1, so
+  renaming a focal to a lower letter cannot roll the sequence backwards and
+  reissue a label that is already in use.
+- Closing the app mid-focal leaves that interval's `end_ts` null. No recovery
+  path on startup.
+- `icon-192.png` / `icon-512.png` do not exist. Only affects the home-screen
+  icon; manifest and apple-touch-icon still reference them.
+- No pre-caching of map tiles. The survey area must be panned at the zoom levels
+  to be used, while online, before leaving the dock. Operational, not a bug.
+- Serial reconnect, the stale/dead-feed watch, and the port picker have not been
+  exercised against real hardware. The parser and the sentence-to-fix pipeline
+  are tested; everything downstream of navigator.serial is not.
+- COM3 at 4800 is assumed from the receiver on hand. The browser's port picker
+  lets any port be chosen, but the baud rate is fixed in gps.js (SERIAL_BAUD).
+- iPad testing needs https or GitHub Pages. `http://<LAN-IP>:8080` is not a
+  secure context, so iOS Safari gives neither geolocation nor a service worker.
+- Button-level UI wiring has not been exercised in a browser; verification so
+  far is a scripted harness against `app.js` plus a static id/reference check.
