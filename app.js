@@ -9,6 +9,7 @@ const state = {
   lastTrackLogTs: 0,
   tags: [],
   map: null,
+  tileManifest: null,      // tiles/manifest.json, or null if not cached
   trackLine: null,
   eventMarkers: [],
   posMarker: null,

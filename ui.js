@@ -1,5 +1,8 @@
 // ui.js — DOM rendering and map drawing. Talks to App/DB, no business logic here.
 
+// Prince William Sound. Matches the default bbox in tools/fetch_tiles.py.
+const PWS_CENTER = [60.65, -147.1];
+
 function $(sel) { return document.querySelector(sel); }
 function el(tag, props = {}, children = []) {
   const e = document.createElement(tag);
@@ -56,14 +59,92 @@ function updatePositionUI(p) {
   }
 }
 
-function initMap() {
-  const map = L.map('map', { zoomControl: true }).setView([58, -148], 8);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    attribution: '&copy; OpenStreetMap',
-  }).addTo(map);
+// NOAA's Electronic Navigational Chart service. This is the reason the map has
+// a layer control rather than one hardcoded tile layer: a marine survey needs
+// soundings and depth contours, and OpenStreetMap has neither.
+//
+// The layer numbers are a known gap. The service's GetCapabilities document
+// lists layers 0-12 with no <Title> elements, so there is no published mapping
+// from these numbers to ENC usage bands (Overview, General, Coastal, Approach,
+// Harbour). 0-6 was chosen by rendering Prince William Sound and looking at the
+// result; which band appears at which zoom is untested. Change NOAA_LAYERS if
+// the chart is too cluttered or too sparse at working zoom.
+const NOAA_WMS =
+  'https://gis.charttools.noaa.gov/arcgis/rest/services/MCS/ENCOnline/MapServer' +
+  '/exts/MaritimeChartService/WMSServer';
+const NOAA_LAYERS = '0,1,2,3,4,5,6';
+
+// Written by tools/fetch_tiles.py. Absent unless the fetcher has been run, in
+// which case the app is online-only and says so.
+const TILE_MANIFEST = 'tiles/manifest.json';
+
+async function loadTileManifest() {
+  try {
+    const res = await fetch(TILE_MANIFEST, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const m = await res.json();
+    return m && m.layers && Object.keys(m.layers).length ? m : null;
+  } catch (_) {
+    // No manifest is the normal case on a fresh clone, not an error.
+    return null;
+  }
+}
+
+function onlineLayers() {
+  return {
+    'Nautical chart (NOAA ENC)': L.tileLayer.wms(NOAA_WMS, {
+      layers: NOAA_LAYERS,
+      format: 'image/png',
+      transparent: true,
+      version: '1.3.0',
+      maxZoom: 16,
+      attribution: 'NOAA ENC',
+    }),
+    'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap',
+    }),
+  };
+}
+
+async function initMap() {
+  const map = L.map('map', { zoomControl: true }).setView(PWS_CENTER, 9);
   App.state.map = map;
+
+  const bases = {};
+  const manifest = await loadTileManifest();
+
+  // Cached tiles come first so they are the default when present: on a boat with
+  // no signal, an online layer is a grey grid.
+  if (manifest) {
+    for (const [key, info] of Object.entries(manifest.layers)) {
+      bases[`${info.title || key} (offline)`] = L.tileLayer(`tiles/${key}/{z}/{x}/{y}.png`, {
+        minZoom: info.minzoom,
+        maxZoom: info.maxzoom,
+        // Show the nearest cached zoom stretched rather than nothing at all when
+        // zoomed past what was downloaded.
+        maxNativeZoom: info.maxzoom,
+        attribution: (info.attribution || '') + ' (cached)',
+      });
+    }
+  }
+  Object.assign(bases, onlineLayers());
+
+  const overlays = {
+    'Seamarks (OpenSeaMap)': L.tileLayer('https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenSeaMap',
+    }),
+  };
+
+  Object.values(bases)[0].addTo(map);
+  L.control.layers(bases, overlays, { position: 'topright' }).addTo(map);
+
   App.state.trackLine = L.polyline([], { color: '#3ddc97', weight: 3 }).addTo(map);
+  App.state.tileManifest = manifest;
+  setStatus(manifest
+    ? `Ready. Offline tiles: ${Object.keys(manifest.layers).join(', ')}.`
+    : 'Ready. No cached tiles — map needs a connection. See README.');
 }
 
 function drawTrackPoint(rec) {
@@ -309,6 +390,7 @@ function clearOptionalFields() {
 
 const UI = {
   $, el, setStatus, fmtCoord, fmtTime, updatePositionUI, updateGpsUI, initMap, drawTrackPoint,
+  loadTileManifest,
   drawEventMarker, loadExistingIntoMap, renderTagGrid, openNotesPrompt, renderTagManager,
   showFocalPanel, showTab, setTrackToggle, setFocalHeader, refreshFocalIdState, openClearModal, setActiveIntervalButton, refreshBlowCount, bumpBlowCount,
   startIntervalTimer, stopIntervalTimer, setBehaviorButtons, clearOptionalFields,

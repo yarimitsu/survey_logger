@@ -19,7 +19,7 @@ async function init() {
   App.state.config = config;
   UI.$('#device-label').textContent = config.device_label;
 
-  UI.initMap();
+  await UI.initMap();
   await UI.loadExistingIntoMap();
 
   App.state.tags = await App.loadTags();

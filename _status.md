@@ -45,6 +45,11 @@ and cost a debugging round. No cache bumping needed during development.
   Auto-reconnect on drop, forced port reopen on a silent feed.
 - gps_source / gps_time_utc columns on TRACK rows.
 - README.md.
+- Map layer control: NOAA ENC nautical chart (default), OpenStreetMap,
+  OpenSeaMap seamark overlay, plus any offline layer found on disk.
+- tools/fetch_tiles.py: downloads tiles to tiles/<layer>/{z}/{x}/{y}.png and
+  writes tiles/manifest.json. App reads the manifest at startup and prefers
+  cached layers when present.
 - test_gps.js: 39 assertions on NMEA parsing and the sentence-to-fix pipeline.
 
 ## Key decisions
@@ -83,6 +88,27 @@ and cost a debugging round. No cache bumping needed during development.
   meta store (device id and label) and the tag list, which are configuration
   rather than observations. Clear is blocked while a focal follow is open, and
   reloads the page afterwards rather than unwinding map layers by hand.
+- Offline tiles go to DISK and are served from localhost, not left to the
+  service worker's runtime cache. The SW cache needs the area panned at every
+  zoom while online and can be evicted; disk tiles cannot. The SW path remains
+  for the iPad, which cannot run the fetcher.
+- tiles/ is gitignored. ~250 MB of binary derived data does not belong in git;
+  each machine runs the fetcher once after cloning.
+- Chart source is NOAA ENC via gis.charttools.noaa.gov MCS WMS. NOAA's raster
+  chart (RNC) tile services were retired in 2025: tileservice.charts.noaa.gov
+  and seamlessrnc.nauticalcharts.noaa.gov both time out. Do not reinstate them.
+- The fetcher renders each XYZ tile as its own EPSG:3857 WMS GetMap, so a WMS
+  source ends up in the same {z}/{x}/{y} layout as an XYZ source and the offline
+  layer is a plain L.tileLayer regardless of where the tiles came from.
+- NOAA default, OSM behind a flag and throttled to 1 req/s: bulk downloading
+  from tile.openstreetmap.org is against the OSMF tile usage policy. NOAA is
+  US Government work in the public domain with no such restriction.
+- Default bbox widened 2026-09-09 to S 59.30 W -149.20 N 61.45 E -145.20 after
+  the first box (S 59.95) was found to cut off the southern half of Montague
+  Island and the Hinchinbrook Entrance approaches. Also brings Middleton Island
+  inside the cache.
+- The fetcher rewrites the manifest from what is actually on disk, so an
+  interrupted run still leaves a manifest that matches reality.
 - Position sources live in gps.js behind one fix shape {lat, lon, ts, source,
   gps_time}. app.js does not know which source is running. Adding a third source
   later (a NMEA-over-TCP feed from a vessel network, say) should not touch app.js.
@@ -149,8 +175,15 @@ and cost a debugging round. No cache bumping needed during development.
   path on startup.
 - `icon-192.png` / `icon-512.png` do not exist. Only affects the home-screen
   icon; manifest and apple-touch-icon still reference them.
-- No pre-caching of map tiles. The survey area must be panned at the zoom levels
-  to be used, while online, before leaving the dock. Operational, not a bug.
+- NOAA ENC WMS layer numbers are UNDOCUMENTED. GetCapabilities lists layers
+  0-12 with no <Title> elements, so there is no published mapping to ENC usage
+  bands. layers=0,1,2,3,4,5,6 was chosen by rendering PWS and looking at it;
+  which band appears at which zoom is untested. Set in both ui.js (NOAA_LAYERS)
+  and tools/fetch_tiles.py, and they must be kept in step or the cached tiles
+  will not match the online layer.
+- The iPad still has no pre-caching. There the survey area must be panned at the
+  zoom levels to be used, while online, before leaving the dock.
+- The map layer control has not been exercised in a browser.
 - Serial reconnect, the stale/dead-feed watch, and the port picker have not been
   exercised against real hardware. The parser and the sentence-to-fix pipeline
   are tested; everything downstream of navigator.serial is not.
