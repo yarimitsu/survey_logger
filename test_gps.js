@@ -113,5 +113,46 @@ ok('e2e: GGA suppressed while RMC is live', fixes.length === 1, fixes.length);
 pipe(csum('$GPGSV,3,1,11,03,03,111,00') + '\r\n' + 'garbage\r\n' + ci + '\r\n');
 ok('e2e: parses a valid RMC after noise', fixes.length === 2, fixes.length);
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+// --- the COM port is held by another program ---
+// A Windows COM port is exclusive: one process at a time. If a chart plotter or
+// another tab already has the receiver, open() rejects and there is nothing to
+// retry. connectSerial must say so once, not disappear into the reconnect loop.
+function stubSerial(openImpl, portCount) {
+  const port = { open: openImpl, close: async () => {}, getInfo: () => ({}), readable: null };
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      serial: {
+        getPorts: async () => new Array(portCount === undefined ? 1 : portCount).fill(port),
+        requestPort: async () => port,
+      },
+    },
+    configurable: true, writable: true,
+  });
+  return port;
+}
+
+(async () => {
+  const notes = [];
+  GPS.init({ onFix() {}, onStatus: (m) => notes.push(m) });
+
+  const busy = new Error('Failed to open serial port.');
+  stubSerial(async () => { throw busy; });
+  const connected = await GPS.connectSerial();
+
+  ok('busy port: connectSerial reports failure', connected === false, connected);
+  ok('busy port: source is not left as serial', GPS.activeSource() !== 'serial', GPS.activeSource());
+  ok('busy port: message names the real cause',
+     notes.some((m) => /only be held by one program/.test(m)), notes);
+  ok('busy port: message includes the browser error',
+     notes.some((m) => m.includes('Failed to open serial port.')), notes);
+
+  // Must be past RECONNECT_DELAY_MS (3 s), or a retry loop would not have had
+  // time to fire and this assertion would pass vacuously.
+  const before = notes.length;
+  await new Promise((r) => setTimeout(r, 3500));
+  ok('busy port: stopped retrying rather than looping', notes.length === before,
+     notes.slice(before));
+
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();

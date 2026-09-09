@@ -52,7 +52,14 @@ and cost a debugging round. No cache bumping needed during development.
   cached layers when present.
 - tools/check_static.py: ids, namespace exports, script order, service worker
   shell list, and NOAA_LAYERS agreement between ui.js and the fetcher.
-- test_gps.js: 39 assertions on NMEA parsing and the sentence-to-fix pipeline.
+- test_gps.js: 44 assertions on NMEA parsing, the sentence-to-fix pipeline, and
+  the busy-COM-port failure path.
+- test_export.js: 32 assertions on the two-file CSV export, including the
+  no-follows and empty-database cases.
+- test_startup.js: 12 assertions that startup completes and every button gets
+  wired. A rejection anywhere in main.js init() is caught by one handler at the
+  bottom, skipping wireControls() and leaving the WHOLE UI inert with only a
+  status line as the clue.
 
 ## Key decisions
 
@@ -145,6 +152,17 @@ and cost a debugging round. No cache bumping needed during development.
   one; otherwise the picker is shown. On reconnect, only a port that is the
   chosen one or matches its USB vendor/product ids is accepted, so a dropped
   GPS cannot silently come back as some other authorised device.
+- A COM port is EXCLUSIVE on Windows: one process at a time. Two programs
+  cannot share one receiver without a virtual COM port splitter (com0com +
+  hub4com, or VSPE). This is the most likely cause of a Connect GPS that does
+  nothing, and the failure message now names it.
+- The FIRST port open is awaited inside connectSerial, not left to the session
+  loop. Handing the port straight to the background loop made connectSerial
+  return true while the open was still failing, so the button reported success
+  and then looped 'retrying...' forever on a permanent condition. Reproduced
+  in test_gps.js against the pre-fix code before fixing.
+- serialSession only retries a port that has opened at least once (everOpened).
+  Retrying one that never opened loops on something a reconnect cannot fix.
 - A silent serial feed, not an exception, is the usual way a track dies. The
   stale watch forces the port back open after 30 s of silence.
 - Track cadence changed 30 s -> 10 s on 2026-09-09 (user request), and a point
@@ -197,6 +215,7 @@ and cost a debugging round. No cache bumping needed during development.
 - The iPad still has no pre-caching. There the survey area must be panned at the
   zoom levels to be used, while online, before leaving the dock.
 - The map layer control has not been exercised in a browser.
+- The com0com / VSPE splitter route is documented but untested.
 - Serial reconnect, the stale/dead-feed watch, and the port picker have not been
   exercised against real hardware. The parser and the sentence-to-fix pipeline
   are tested; everything downstream of navigator.serial is not.

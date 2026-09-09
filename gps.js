@@ -137,6 +137,7 @@ const gpsState = {
   port: null,
   reader: null,
   selectedPort: null,      // the port the user actually picked, for reconnect matching
+  everOpened: false,       // has this session ever got the port open at all?
   keepReading: false,      // false once the user disconnects on purpose
   reconnectTimer: null,
   staleTimer: null,
@@ -285,8 +286,9 @@ function stopStaleWatch() {
 
 // One attempt at opening `port` and running the read loop. Any failure here is
 // reported and retried by the caller rather than thrown.
-async function runPort(port) {
-  await port.open({ baudRate: SERIAL_BAUD });
+async function runPort(port, alreadyOpen) {
+  if (!alreadyOpen) await port.open({ baudRate: SERIAL_BAUD });
+  gpsState.everOpened = true;
   gpsState.port = port;
   gpsState.source = 'serial';
   gpsState.lastSentenceTs = Date.now();
@@ -323,18 +325,28 @@ function sameDevice(a, b) {
 // purpose, so an unplug-and-replug, a sleep/wake, or a driver hiccup recovers
 // on its own. Permission to use the port survives the drop, so no second
 // click is needed — navigator.serial.getPorts() returns it without a gesture.
-async function serialSession(port) {
+async function serialSession(port, alreadyOpen) {
   gpsState.keepReading = true;
   gpsState.selectedPort = port;
+  let first = alreadyOpen;
   while (gpsState.keepReading) {
     try {
-      await runPort(port);
+      await runPort(port, first);
       if (!gpsState.keepReading) break;
       report('USB GPS disconnected. Retrying...');
     } catch (err) {
       if (!gpsState.keepReading) break;
+      // Only retry a port that has actually worked at some point. Retrying one
+      // that has never opened loops forever on a permanent condition — most
+      // often another program holding the COM port — and the repeating message
+      // reads as a flaky connection rather than the fixable thing it is.
+      if (!gpsState.everOpened) {
+        report(openFailureMessage(err));
+        break;
+      }
       report('USB GPS error: ' + err.message + ' — retrying...');
     }
+    first = false;
     await closePort();
     if (!gpsState.keepReading) break;
     await new Promise((r) => { gpsState.reconnectTimer = setTimeout(r, RECONNECT_DELAY_MS); });
@@ -351,6 +363,17 @@ async function serialSession(port) {
   if (gpsState.source === 'serial') gpsState.source = 'none';
 }
 
+// A COM port is exclusive on Windows: exactly one process may have it open.
+// If a chart plotter, SeaLog, OpenCPN, or another tab of this app already holds
+// the receiver, open() fails and there is nothing to retry — so say what to do
+// about it rather than reporting a bare DOMException.
+function openFailureMessage(err) {
+  const msg = err && err.message ? err.message : String(err);
+  return 'Could not open the USB GPS: ' + msg +
+    ' — a COM port can only be held by one program at a time. Close any other ' +
+    'program using the GPS (chart plotter, SeaLog, another tab of this app) and try again.';
+}
+
 // Must be called from a user gesture: requestPort() opens the browser's port
 // picker, which the spec only permits in response to a click.
 async function connectSerial() {
@@ -365,7 +388,19 @@ async function connectSerial() {
     // coin flip and the wrong guess is silent. With more than one, ask.
     const granted = await navigator.serial.getPorts();
     const port = granted.length === 1 ? granted[0] : await navigator.serial.requestPort();
-    serialSession(port);   // deliberately not awaited: it runs for the survey
+
+    // The first open is awaited HERE rather than left to the session loop, so a
+    // failure is reported on the click that caused it. Handing it straight to
+    // the background loop meant connectSerial returned true while the open was
+    // still failing, and the button looked dead.
+    gpsState.everOpened = false;
+    try {
+      await port.open({ baudRate: SERIAL_BAUD });
+    } catch (err) {
+      report(openFailureMessage(err));
+      return false;
+    }
+    serialSession(port, true);   // not awaited: it runs for the rest of the survey
     return true;
   } catch (err) {
     // The user closing the picker without choosing throws; that is a cancel,

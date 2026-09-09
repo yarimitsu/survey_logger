@@ -80,6 +80,29 @@ At the dock, with the app running and the track on, unplug the puck and watch
 the status line, then plug it back in and confirm the track resumes. Five
 minutes, and it is the difference between a claim and a verified behaviour.
 
+### Sharing the GPS with another program
+
+**You cannot.** A Windows COM port is exclusive: exactly one process may have it
+open at a time. If SeaLog, OpenCPN, a chart plotter, or even another browser tab
+running this app already holds COM3, Connect GPS will fail, and the status line
+will say so and name this as the reason.
+
+If the port is busy, the fixes are, in order of preference:
+
+1. **Close the other program.** Simplest, and right if you do not actually need
+   both at once.
+2. **Use a virtual COM port splitter.** A driver reads the real port once and
+   presents the same NMEA stream on two or more virtual ports, one per program.
+   `com0com` with `hub4com` is the free, open-source option on Windows; VSPE is
+   the common commercial one. Point this app at one virtual port and the other
+   program at the other. Untested here - if you go this way, confirm at the dock
+   that both programs show a moving position before relying on it.
+3. **A second receiver.** USB GPS pucks are cheap, and two receivers avoid the
+   whole problem plus give you a spare when one fails at sea.
+
+Clicking **USB GPS** while connected disconnects and releases the port, so you
+can hand it to another program without closing the app.
+
 **Browser support.** Web Serial is Chrome and Edge on desktop only. On Safari,
 Firefox, or any iPad, the button reads **Device GPS** and the app falls back to
 `navigator.geolocation`. Only one source is ever live at a time; connecting the
@@ -247,15 +270,16 @@ two iPads will both produce `FocalA` — so use `device_label` to tell them apar
 
     node test_gps.js
     node test_export.js
+    node test_startup.js
     python tools/check_static.py
 
-`test_gps.js` - 39 assertions covering NMEA parsing: checksums against canonical published
+`test_gps.js` - 44 assertions covering NMEA parsing: checksums against canonical published
 sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere signs
 (round-tripped against a real Cook Inlet position, 59.62882, -151.6138883),
 two-digit year handling, invalid-fix rejection, sentence reassembly across stream
 chunks, and the end-to-end sentence-to-fix pipeline.
 
-`test_export.js` - 25 assertions covering the CSV export. It evaluates `app.js`
+`test_export.js` - 32 assertions covering the CSV export. It evaluates `app.js`
 against an in-memory database and checks that no row is lost or duplicated across
 the two files, that the cross-file join survives, that the cadence floor holds
 between forced points, that forced points carry the event timestamp, and that
@@ -270,8 +294,14 @@ worker's shell list, and that `NOAA_LAYERS` is identical in `ui.js` and
 `tools/fetch_tiles.py` - a mismatch there would make the cached chart silently
 differ from the online one, which you would not discover until you were offline.
 
-There is no automated test of the browser UI wiring or the map layers; those are
-exercised by hand.
+`test_startup.js` - 12 assertions that startup runs to completion and every
+button actually gets a handler. `main.js` does all of startup inside one async
+`init()`, and a rejection anywhere in it is caught by a single handler at the
+bottom - so one broken await skips `wireControls()` and leaves the entire UI
+inert, with one line of status text as the only clue.
+
+There is no automated test of the map layers or of real serial hardware; those
+are exercised by hand.
 
 ---
 
