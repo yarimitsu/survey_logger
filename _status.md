@@ -208,6 +208,11 @@ and cost a debugging round. No cache bumping needed during development.
   that then dropped the source would lose field data.
 - importFile folds a legacy `blows` array into `behaviors` the same way, so an
   export taken before v2 still merges. Tested; the IndexedDB upgrade path is not.
+- The behavior -> activity rename is handled on THREE paths, because missing any
+  one loses the sticky state silently rather than with an error: the v2 upgrade
+  rewrites existing focals/intervals, importFile rewrites legacy rows, and the
+  export reads `activity || behavior` so a row that missed both still comes out
+  right. The export fallback is negative-tested.
 - Focal labels restart at FocalA after a clear. If an old export is later merged
   with a new one, FocalA will appear twice; separate by date or keep the files
   apart.

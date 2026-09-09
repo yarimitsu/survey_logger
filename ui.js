@@ -410,13 +410,19 @@ function renderBehaviorGrid(onTap) {
 // Brief highlight so a tap is visibly registered on a moving boat, where the
 // count only changes for blows and the other behaviours would otherwise give no
 // feedback at all.
+const flashTimers = new WeakMap();
+
 function flashBehavior(behavior) {
   // Matched by walking the buttons rather than with an attribute selector:
   // behaviour names contain spaces ("fluke up"), and this needs no escaping.
   for (const b of document.querySelectorAll('#behavior-grid .behavior-btn')) {
     if (b.dataset.behavior !== behavior) continue;
     b.classList.add('just-tapped');
-    setTimeout(() => b.classList.remove('just-tapped'), 350);
+    // Blows can come faster than the highlight lasts. Without clearing the
+    // previous timer, the first tap's expiry wipes the highlight while the
+    // second tap is still current, and the button reads as unregistered.
+    clearTimeout(flashTimers.get(b));
+    flashTimers.set(b, setTimeout(() => b.classList.remove('just-tapped'), 350));
     return;
   }
 }

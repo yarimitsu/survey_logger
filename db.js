@@ -39,6 +39,25 @@ function openDB() {
           cur.continue();
         };
       }
+      // The other half of the same rename: the sticky transit/foraging state on
+      // focals and intervals was called `behavior` before v2 and is now
+      // `activity`. Without this, existing follows keep a field nothing reads
+      // and export a blank activity column - a silent loss, not an error.
+      if (ev.oldVersion < 2) {
+        for (const name of ['focals', 'focal_intervals']) {
+          if (!db.objectStoreNames.contains(name)) continue;
+          const store = req.transaction.objectStore(name);
+          store.openCursor().onsuccess = (e) => {
+            const cur = e.target.result;
+            if (!cur) return;
+            const row = cur.value;
+            if (row.activity === undefined && row.behavior !== undefined) {
+              store.put({ ...row, activity: row.behavior });
+            }
+            cur.continue();
+          };
+        }
+      }
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
     req.onerror = () => reject(req.error);

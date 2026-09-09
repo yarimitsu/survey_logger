@@ -389,7 +389,11 @@ async function importFile(file) {
   for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors']) {
     const rows = dump[store] || [];
     for (const row of rows) {
-      await DB.put(store, row);
+      // Pre-v2 focals and intervals call the sticky state `behavior`; it is
+      // `activity` now. Same rename the IndexedDB upgrade applies.
+      const needsRename = (store === 'focals' || store === 'focal_intervals') &&
+        row.activity === undefined && row.behavior !== undefined;
+      await DB.put(store, needsRename ? { ...row, activity: row.behavior } : row);
       count++;
     }
   }
@@ -542,7 +546,9 @@ async function exportCSV() {
       ts: f.start_ts,
       end_ts: f.end_ts == null ? '' : f.end_ts,
       duration_s: f.end_ts ? (f.end_ts - f.start_ts) / 1000 : '',
-      activity: f.activity || '',
+      // Falls back to the pre-v2 field name, so a row that missed the
+      // migration still exports its activity rather than a blank.
+      activity: f.activity || f.behavior || '',
       notes: f.notes || '',
       device_id: f.device_id,
       record_id: f.id,
@@ -558,7 +564,7 @@ async function exportCSV() {
       duration_s: iv.end_ts ? (iv.end_ts - iv.start_ts) / 1000 : '',
       interval_type: iv.type,
       quality: iv.quality || '',
-      activity: iv.activity || '',
+      activity: iv.activity || iv.behavior || '',
       lat: iv.lat, lon: iv.lon,
       distance_m: iv.distance_m,
       bearing_to_whale: iv.bearing_to_whale,
@@ -571,6 +577,8 @@ async function exportCSV() {
     });
   }
 
+  const behaviorFocal = (b, iv) => focalByUuid.get(b.focal_uuid || uuidOf(iv));
+
   for (const b of behaviors) {
     const iv = b.interval_id ? intervalById.get(b.interval_id) : null;
     rows.push({
@@ -580,7 +588,11 @@ async function exportCSV() {
       behavior: b.behavior || 'blow',
       secs_into_surfacing: iv ? (b.ts - iv.start_ts) / 1000 : '',
       interval_type: iv ? iv.type : '',
-      activity: iv ? (iv.activity || '') : '',
+      // Interval first, then the focal, so a behaviour logged before any
+      // interval was opened still carries the activity in force at the time.
+      activity: (iv && (iv.activity || iv.behavior)) ||
+                ((behaviorFocal(b, iv) && (behaviorFocal(b, iv).activity ||
+                                           behaviorFocal(b, iv).behavior)) || ''),
       device_id: b.device_id,
       record_id: b.id,
       interval_id: b.interval_id || '',

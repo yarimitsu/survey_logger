@@ -262,7 +262,9 @@ Two different columns, deliberately named apart:
   is five rows.
 - **`activity`** - the sticky state of the follow (`unknown`, `transit`,
   `foraging`), carried on `FOCAL` and `INTERVAL` rows. It applies until you
-  change it, and it was called `behavior` before 2026-09-09.
+  change it, and it was called `behavior` before 2026-09-09. Follows recorded
+  under the old name are renamed on upgrade and on import, and the export falls
+  back to the old field anyway, so nothing recorded earlier loses its state.
 
 `secs_into_surfacing` gives each behaviour's offset from the start of the
 interval it fell in, and `surfacing_id` (e.g. `FocalA-S3`) ties it to a
@@ -308,7 +310,7 @@ sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere sign
 two-digit year handling, invalid-fix rejection, sentence reassembly across stream
 chunks, and the end-to-end sentence-to-fix pipeline.
 
-`test_export.js` - 50 assertions covering the CSV export. It evaluates `app.js`
+`test_export.js` - 56 assertions covering the CSV export. It evaluates `app.js`
 against an in-memory database and checks that no row is lost or duplicated across
 the two files, that the cross-file join survives, that the cadence floor holds
 between forced points, that forced points carry the event timestamp, and that

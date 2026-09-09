@@ -289,6 +289,53 @@ build().then(async () => {
   ok('legacy import: re-import is idempotent', stores.behaviors.length === 2,
      stores.behaviors.length);
 
+  // ---------- the behavior -> activity rename on pre-v2 rows ----------
+  // Focals and intervals recorded before 2026-09-09 call the sticky
+  // transit/foraging state `behavior`. Nothing reads that name any more, so
+  // without both a migration and a read-side fallback they export a blank
+  // activity column with no error at all.
+  for (const k of Object.keys(stores)) stores[k].length = 0;
+  const preV2 = {
+    focals: [{ id: 'dev8_f1', device_id: 'dev8', device_label: 'iPad-2',
+               focal_id: 'FocalQ', whale_id: 'OLD-9',
+               start_ts: 100, end_ts: 900, behavior: 'foraging' }],
+    focal_intervals: [{ id: 'dev8_i1', device_id: 'dev8', focal_uuid: 'dev8_f1',
+                        type: 'SURFACE', start_ts: 100, end_ts: 400,
+                        behavior: 'foraging', quality: 'good' }],
+    blows: [{ id: 'dev8_b1', device_id: 'dev8', interval_id: 'dev8_i1', ts: 150 }],
+  };
+  await App.importFile({ text: async () => JSON.stringify(preV2) });
+
+  ok('rename: import moved focal behavior -> activity',
+     stores.focals[0].activity === 'foraging', stores.focals[0]);
+  ok('rename: import moved interval behavior -> activity',
+     stores.focal_intervals[0].activity === 'foraging', stores.focal_intervals[0]);
+
+  saved.length = 0;
+  await App.exportCSV();
+  const rn = parse(saved[1].text);
+  const byType = (t) => rn.rows.filter((r) => r.record_type === t);
+  ok('rename: FOCAL row exports its activity',
+     byType('FOCAL').every((r) => r.activity === 'foraging'),
+     byType('FOCAL').map((r) => r.activity));
+  ok('rename: INTERVAL row exports its activity',
+     byType('INTERVAL').every((r) => r.activity === 'foraging'),
+     byType('INTERVAL').map((r) => r.activity));
+  ok('rename: migrated blow exports as a BEHAVIOR row carrying activity',
+     byType('BEHAVIOR').every((r) => r.behavior === 'blow' && r.activity === 'foraging'),
+     byType('BEHAVIOR').map((r) => [r.behavior, r.activity]));
+
+  // The read-side fallback must hold even for a row the migration never touched.
+  stores.focals[0] = { ...stores.focals[0] };
+  delete stores.focals[0].activity;
+  stores.focals[0].behavior = 'transit';
+  saved.length = 0;
+  await App.exportCSV();
+  ok('rename: unmigrated row still exports activity via the fallback',
+     parse(saved[1].text).rows.filter((r) => r.record_type === 'FOCAL')
+       .every((r) => r.activity === 'transit'),
+     parse(saved[1].text).rows.filter((r) => r.record_type === 'FOCAL').map((r) => r.activity));
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }).catch((e) => { console.error(e); process.exit(1); });
