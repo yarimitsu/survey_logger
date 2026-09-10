@@ -160,10 +160,18 @@ default; if not, the app is online-only and the status line says so.
 
 The script prints the tile count per zoom and samples a few tiles to estimate the
 download before asking to proceed. For the default area and zoom range that is
-**12,377 tiles, roughly 250 MB**. Measured rate is about 83 tiles a minute, so
-budget **two and a half hours** and start it the night before. It skips tiles already on disk, so an interrupted run
-resumes where it stopped and a rerun after widening the box only fetches the new
-edges.
+**12,377 tiles, about 110 MB** on disk. Measured rate is roughly 90 tiles a
+minute, so budget **two to two and a half hours** and start it the night before.
+
+The size the script predicts up front is an extrapolation from an 8-tile sample
+and runs high - it sampled 20.7 KB a tile against a true mean nearer 9 KB, so it
+guessed 250 MB for a 110 MB download. Treat its estimate as an upper bound.
+
+It skips tiles already on disk, so an interrupted run resumes where it stopped,
+and a rerun after widening the box only fetches the new edges. If a tile times
+out the run carries on and reports the count; the manifest records
+`"complete": false` and the status line says INCOMPLETE, so just rerun to fill
+the gaps.
 
     python tools/fetch_tiles.py --zoom 8 14                # ~48,000 tiles; not casually
     python tools/fetch_tiles.py --bbox 59.0 -149.5 61.5 -144.8

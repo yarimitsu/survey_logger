@@ -1,4 +1,4 @@
-# Cached map tiles. Large (~150 MB for PWS z8-13), binary, and derived:
+# Cached map tiles. Large (~110 MB for PWS z8-13), binary, and derived:
 # regenerate with tools/fetch_tiles.py rather than committing them.
 tiles/
 
