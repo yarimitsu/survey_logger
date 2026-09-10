@@ -31,9 +31,9 @@ and cost a debugging round. No cache bumping needed during development.
 - Focal labels FocalA/FocalB..., auto-assigned per device.
 - Whale ID field, assignable at any point in a follow.
 - Focal ID editable during a follow, with a warning on duplicate or blank labels.
-- Cumulative CSV export, TWO files per export: survey_log_<device>_<stamp>.csv
-  (EVENT, TRACK) and focal_follows_<device>_<stamp>.csv (FOCAL, INTERVAL,
-  BLOW). Long format, one row per record, strict time order within each.
+- Cumulative CSV export, ONE file: survey_log_<device>_<stamp>.csv, holding
+  TRACK, EVENT, FOCAL, INTERVAL and BEHAVIOR rows. Long format, one row per
+  record, one shared column set, strict time order.
 - navigator.storage.persist() requested at startup; warns in the status line if
   the browser refuses.
 - "Clear all survey data" button with a typed-CLEAR confirmation, record counts,
@@ -178,15 +178,16 @@ and cost a debugging round. No cache bumping needed during development.
 - A forced write resets lastTrackLogTs. Otherwise a run of blows would write a
   point per tap AND leave the cadence ticking underneath, doubling density
   during the busiest part of a follow.
-- Export split back into two files on 2026-09-09 (user request), reversing the
-  earlier consolidation. One row build feeds both, so surfacing numbering,
-  device-label stamping and time ordering stay single-source.
-- focal_id / focal_uuid are KEPT in the survey log. They are the only link
-  between the two files; without them the vessel track for a given follow
-  cannot be recovered.
-- The clear-data dialog's Export button writes both files. Exporting one and
-  then clearing would silently discard the other.
-- seq is per file. Cross-file order is still recoverable from ts.
+- Export went two files -> ONE file on 2026-09-10 (user request), reversing the
+  split made the day before. Track points are in it. seq is global 1..n and the
+  five record types share one column set: a row is only ever one kind of thing,
+  so inapplicable columns are simply blank.
+- exportCSV still returns { files: [...] } with a single entry. The callers
+  already render a list, and keeping the shape means adding a second output
+  later does not ripple back through the UI.
+- BEHAVIOR rows carry their own lat/lon as well as forcing a track point. In a
+  combined file, a breach with no position would have to be joined to the track
+  point beside it to be mapped - needless work for a value already in hand.
 - The single blow button became a set of timestamped behaviours on 2026-09-09
   (user request). The record field is `behavior`; the sticky Unknown/Transit/
   Foraging state was RENAMED from `behavior` to `activity` in the same change,

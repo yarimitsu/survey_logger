@@ -285,6 +285,7 @@ async function updateCurrentInterval(patch) {
 // the interval switch happens.
 async function logBehavior(behavior) {
   if (!state.focal) return null;
+  const p = currentPositionOrNull();
   const rec = {
     id: `${state.config.device_id}_${DB.uuid()}`,
     device_id: state.config.device_id,
@@ -292,6 +293,12 @@ async function logBehavior(behavior) {
     interval_id: state.focalInterval ? state.focalInterval.id : null,
     ts: Date.now(),
     behavior,
+    // Stamped here as well as on the forced track point, the same way an event
+    // tag is. In a single combined file a behaviour row with no position would
+    // have to be joined to the track point beside it to place a breach on a
+    // map, which is needless work for a value already in hand.
+    lat: p ? p.lat : null,
+    lon: p ? p.lon : null,
   };
   await DB.put('behaviors', rec);
   await forceTrackPoint(rec.ts);
@@ -439,25 +446,22 @@ function isoOrBlank(ts) {
 // season has data.
 const BEHAVIORS = ['blow', 'breach', 'lunge', 'fluke up', 'fluke down', 'slap', 'other'];
 
-// EVENT and TRACK are the survey log; FOCAL, INTERVAL and BLOW are the follow.
-const SURVEY_TYPES = new Set(['EVENT', 'TRACK']);
-const FOCAL_TYPES = new Set(['FOCAL', 'INTERVAL', 'BEHAVIOR']);
-
-const SURVEY_COLUMNS = [
-  'seq', 'record_type', 'ts', 'time_utc',
-  'lat', 'lon', 'gps_source', 'gps_time_utc', 'trigger',
-  'tag_label', 'notes',
-  'focal_id', 'whale_id', 'focal_uuid',
-  'device_label', 'device_id', 'record_id',
-];
-
-const FOCAL_COLUMNS = [
+// One file, every record type, long format. The five record types share a
+// column set rather than getting a table each: a row is only ever one kind of
+// thing, so the columns that do not apply are simply blank, and everything
+// stays joinable by ts without a second file to line up.
+//
+// Order matters for reading it in a spreadsheet: identity first, then what
+// happened, then where, then the ids needed to join.
+const ALL_COLUMNS = [
   'seq', 'record_type', 'ts', 'time_utc',
   'focal_id', 'whale_id', 'surfacing_num', 'surfacing_id',
+  'behavior', 'activity',
   'interval_type', 'end_ts', 'end_time_utc', 'duration_s',
-  'behavior', 'activity', 'quality', 'secs_into_surfacing',
-  'lat', 'lon', 'distance_m', 'bearing_to_whale', 'swim_direction',
-  'notes',
+  'quality', 'secs_into_surfacing',
+  'lat', 'lon', 'gps_source', 'gps_time_utc', 'trigger',
+  'tag_label', 'notes',
+  'distance_m', 'bearing_to_whale', 'swim_direction',
   'device_label', 'device_id', 'record_id', 'interval_id', 'focal_uuid',
 ];
 
@@ -584,6 +588,8 @@ async function exportCSV() {
     rows.push({
       record_type: 'BEHAVIOR',
       ts: b.ts,
+      lat: b.lat === undefined ? '' : b.lat,
+      lon: b.lon === undefined ? '' : b.lon,
       // Rows migrated from the pre-v2 blows store have no behavior field.
       behavior: b.behavior || 'blow',
       secs_into_surfacing: iv ? (b.ts - iv.start_ts) / 1000 : '',
@@ -651,39 +657,17 @@ async function exportCSV() {
     r.device_label = deviceLabelById.get(r.device_id) || '';
   });
 
-  // Two files. The survey log is dominated by track points and event tags; the
-  // focal file by intervals and blows. They are used by different analyses and
-  // at very different row counts, so they are written separately — but both
-  // come out of the one row build above, so surfacing numbering, device-label
-  // stamping and time ordering stay single-source.
-  //
-  // focal_id / focal_uuid are kept in the survey log ON PURPOSE. They are the
-  // only link between the two files: without them there is no way to pull the
-  // vessel track for a given follow.
-  const files = [
-    { key: 'survey_log', types: SURVEY_TYPES, columns: SURVEY_COLUMNS },
-    { key: 'focal_follows', types: FOCAL_TYPES, columns: FOCAL_COLUMNS },
-  ];
+  rows.forEach((r, i) => { r.seq = i + 1; });
 
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const name = `survey_log_${state.config.device_label}_${stamp}.csv`;
 
-  const written = [];
-  for (const f of files) {
-    const subset = rows.filter((r) => f.types.has(r.record_type));
-    // seq is per file, so each one stands alone. Row order across the two is
-    // still recoverable from ts.
-    subset.forEach((r, i) => { r.seq = i + 1; });
-    const name = `${f.key}_${state.config.device_label}_${stamp}.csv`;
-    downloadCSV(name, toCSV(subset, f.columns));
-    written.push({ name, rows: subset.length });
-    // Chrome treats a second programmatic download as a popup and can suppress
-    // it. A short gap makes it reliable; the browser may still ask once for
-    // permission to download multiple files.
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  return { files: written, rows: rows.length };
+  downloadCSV(name, toCSV(rows, ALL_COLUMNS));
+  // Still an array: one file today, and the callers already render a list. Also
+  // means adding a second output later does not ripple back through the UI.
+  return { files: [{ name, rows: rows.length }], rows: rows.length };
 }
 
 const App = {

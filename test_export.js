@@ -1,4 +1,4 @@
-// Harness for the CSV export split. Run: node test_export.js
+// Harness for the CSV export. Run: node test_export.js
 //
 // app.js is a browser script that talks to IndexedDB and the DOM, so it is
 // evaluated here against stubs: an in-memory DB, no-op map drawing, and a
@@ -118,26 +118,21 @@ function parse(text) {
 build().then(async () => {
   const res = await App.exportCSV();
 
-  ok('two files written', saved.length === 2, saved.map((f) => f.name));
-  ok('survey log filename', /^survey_log_Laptop_\d{8}-\d{4}\.csv$/.test(saved[0].name), saved[0].name);
-  ok('focal filename', /^focal_follows_Laptop_\d{8}-\d{4}\.csv$/.test(saved[1].name), saved[1].name);
+  ok('one file written', saved.length === 1, saved.map((f) => f.name));
+  ok('filename', /^survey_log_Laptop_\d{8}-\d{4}\.csv$/.test(saved[0].name), saved[0].name);
 
+  // One file now holds everything, so both views below read the same rows.
   const survey = parse(saved[0].text);
-  const focal = parse(saved[1].text);
+  const focal = survey;
   const types = (p) => [...new Set(p.rows.map((r) => r.record_type))].sort();
 
-  ok('survey log holds only EVENT and TRACK',
-     JSON.stringify(types(survey)) === '["EVENT","TRACK"]', types(survey));
-  ok('focal file holds only BEHAVIOR, FOCAL, INTERVAL',
-     JSON.stringify(types(focal)) === '["BEHAVIOR","FOCAL","INTERVAL"]', types(focal));
+  ok('the file holds every record type',
+     JSON.stringify(types(survey)) === '["BEHAVIOR","EVENT","FOCAL","INTERVAL","TRACK"]',
+     types(survey));
+  ok('every row was written', survey.rows.length === res.rows, [survey.rows.length, res.rows]);
 
-  // nothing lost in the split
-  const total = survey.rows.length + focal.rows.length;
-  ok('every row landed in exactly one file', total === res.rows, [total, res.rows]);
-
-  // the join between the two files
-  ok('survey log keeps focal_id', survey.cols.includes('focal_id'));
-  ok('survey log keeps focal_uuid', survey.cols.includes('focal_uuid'));
+  ok('keeps focal_id', survey.cols.includes('focal_id'));
+  ok('keeps focal_uuid', survey.cols.includes('focal_uuid'));
   const trackInFocal = survey.rows.filter((r) => r.record_type === 'TRACK' && r.focal_id);
   ok('track points inside the follow carry its focal_id',
      trackInFocal.length > 0 && trackInFocal.every((r) => r.focal_id === 'FocalA'),
@@ -157,27 +152,41 @@ build().then(async () => {
      cadence.every((r, i) => i === 0 || Number(r.ts) - Number(cadence[i - 1].ts) >= 10000),
      cadence.map((r) => r.ts));
 
-  // column hygiene
-  ok('survey log has no surfacing_num', !survey.cols.includes('surfacing_num'));
-  ok('focal file has no tag_label', !focal.cols.includes('tag_label'));
-  ok('survey log carries gps_source/gps_time_utc',
+  // column hygiene: one shared column set, so both families must be present
+  ok('carries surfacing_num', survey.cols.includes('surfacing_num'));
+  ok('carries tag_label', survey.cols.includes('tag_label'));
+  ok('no duplicate column names',
+     new Set(survey.cols).size === survey.cols.length, survey.cols);
+  ok('carries gps_source/gps_time_utc',
      survey.cols.includes('gps_source') && survey.cols.includes('gps_time_utc'));
   ok('gps_source populated on track rows',
      survey.rows.filter((r) => r.record_type === 'TRACK').every((r) => r.gps_source === 'serial'));
 
-  // seq is per file and complete
-  ok('survey seq is 1..n', survey.rows.every((r, i) => Number(r.seq) === i + 1));
-  ok('focal seq is 1..n', focal.rows.every((r, i) => Number(r.seq) === i + 1));
+  ok('seq is 1..n across the whole file',
+     survey.rows.every((r, i) => Number(r.seq) === i + 1));
 
-  // time order within each file
   const ordered = (p) => p.rows.every((r, i) => i === 0 || Number(r.ts) >= Number(p.rows[i - 1].ts));
-  ok('survey log in time order', ordered(survey));
-  ok('focal file in time order', ordered(focal));
+  ok('file is in time order', ordered(survey));
 
-  // whale id assigned mid-follow reaches every focal row
-  ok('whale_id joined onto all focal rows',
-     focal.rows.every((r) => r.whale_id === 'PWS-014'),
-     [...new Set(focal.rows.map((r) => r.whale_id))]);
+  // Track points interleave with the records they surround, which is the point
+  // of putting them in the same file.
+  const kinds = survey.rows.map((r) => r.record_type);
+  ok('track rows interleave with focal rows rather than clustering',
+     kinds.indexOf('TRACK') < kinds.indexOf('BEHAVIOR') &&
+     kinds.lastIndexOf('TRACK') > kinds.indexOf('BEHAVIOR'),
+     kinds.join(','));
+
+  // Whale ID assigned mid-follow reaches every row belonging to that follow.
+  // Scoped to rows that carry a focal_uuid: with one combined file, the event
+  // tag and the track points logged before the follow started are in here too,
+  // and those correctly have no whale ID.
+  const inFollow = focal.rows.filter((r) => r.focal_uuid);
+  ok('whale_id joined onto every row of the follow',
+     inFollow.length > 0 && inFollow.every((r) => r.whale_id === 'PWS-014'),
+     [...new Set(inFollow.map((r) => r.whale_id))]);
+  ok('rows outside the follow carry no whale_id',
+     focal.rows.filter((r) => !r.focal_uuid).every((r) => r.whale_id === ''),
+     [...new Set(focal.rows.filter((r) => !r.focal_uuid).map((r) => r.whale_id))]);
 
   // surfacing numbering survives the split
   const surfacings = focal.rows.filter((r) => r.record_type === 'INTERVAL' && r.interval_type === 'SURFACE');
@@ -206,6 +215,13 @@ build().then(async () => {
   ok('a dive behaviour records the DIVE interval', slap && slap.interval_type === 'DIVE',
      slap && slap.interval_type);
 
+  ok('behaviour rows carry their own position',
+     beh.every((r) => r.lat !== '' && r.lon !== ''), beh.map((r) => [r.lat, r.lon]));
+  ok('behaviour position matches the track point at the same instant',
+     beh.every((r) => survey.rows.some(
+       (t) => t.record_type === 'TRACK' && t.ts === r.ts && t.lat === r.lat && t.lon === r.lon)),
+     beh.map((r) => [r.ts, r.lat, r.lon]));
+
   // activity (the sticky state) and behavior (the event) are separate columns
   ok('focal file has an activity column', focal.cols.includes('activity'));
   ok('focal file has a behavior column', focal.cols.includes('behavior'));
@@ -229,23 +245,24 @@ build().then(async () => {
   for (const k of ['focals', 'focal_intervals', 'behaviors']) stores[k].length = 0;
   saved.length = 0;
   const noFocal = await App.exportCSV();
-  ok('no follows: still two files', saved.length === 2, saved.map((f) => f.name));
-  const nf = parse(saved[1].text);
-  ok('no follows: focal file has a header row',
-     saved[1].text.trim().split('\n')[0].startsWith('seq,record_type'),
-     saved[1].text.slice(0, 40));
-  ok('no follows: focal file has zero data rows', nf.rows.length === 0, nf.rows.length);
-  ok('no follows: survey log still populated',
-     parse(saved[0].text).rows.length === noFocal.rows, noFocal.rows);
+  ok('no follows: still one file', saved.length === 1, saved.map((f) => f.name));
+  const nf = parse(saved[0].text);
+  ok('no follows: header row present',
+     saved[0].text.trim().split('\n')[0].startsWith('seq,record_type'),
+     saved[0].text.slice(0, 40));
+  ok('no follows: no focal rows left',
+     nf.rows.every((r) => r.record_type === 'EVENT' || r.record_type === 'TRACK'),
+     [...new Set(nf.rows.map((r) => r.record_type))]);
+  ok('no follows: survey rows still present', nf.rows.length === noFocal.rows, noFocal.rows);
 
   // ---------- a completely empty database ----------
   for (const k of Object.keys(stores)) stores[k].length = 0;
   saved.length = 0;
   const empty = await App.exportCSV();
-  ok('empty db: still two files', saved.length === 2, saved.map((f) => f.name));
-  ok('empty db: both files are header-only',
-     saved.every((f) => f.text.trim().split('\n').length === 1),
-     saved.map((f) => f.text.trim().split('\n').length));
+  ok('empty db: still one file', saved.length === 1, saved.map((f) => f.name));
+  ok('empty db: header-only',
+     saved[0].text.trim().split('\n').length === 1,
+     saved[0].text.trim().split('\n').length);
   ok('empty db: reports zero rows',
      empty.rows === 0 && empty.files.every((f) => f.rows === 0),
      [empty.rows, empty.files.map((f) => f.rows)]);
@@ -279,7 +296,7 @@ build().then(async () => {
 
   saved.length = 0;
   await App.exportCSV();
-  const relegacy = parse(saved[1].text).rows.filter((r) => r.record_type === 'BEHAVIOR');
+  const relegacy = parse(saved[0].text).rows.filter((r) => r.record_type === 'BEHAVIOR');
   ok('legacy import: exports as BEHAVIOR rows', relegacy.length === 2, relegacy.length);
   ok('legacy import: behavior column reads blow',
      relegacy.every((r) => r.behavior === 'blow'), relegacy.map((r) => r.behavior));
@@ -313,7 +330,7 @@ build().then(async () => {
 
   saved.length = 0;
   await App.exportCSV();
-  const rn = parse(saved[1].text);
+  const rn = parse(saved[0].text);
   const byType = (t) => rn.rows.filter((r) => r.record_type === t);
   ok('rename: FOCAL row exports its activity',
      byType('FOCAL').every((r) => r.activity === 'foraging'),
@@ -332,9 +349,9 @@ build().then(async () => {
   saved.length = 0;
   await App.exportCSV();
   ok('rename: unmigrated row still exports activity via the fallback',
-     parse(saved[1].text).rows.filter((r) => r.record_type === 'FOCAL')
+     parse(saved[0].text).rows.filter((r) => r.record_type === 'FOCAL')
        .every((r) => r.activity === 'transit'),
-     parse(saved[1].text).rows.filter((r) => r.record_type === 'FOCAL').map((r) => r.activity));
+     parse(saved[0].text).rows.filter((r) => r.record_type === 'FOCAL').map((r) => r.activity));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

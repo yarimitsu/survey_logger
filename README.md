@@ -223,23 +223,28 @@ the data until a CSV is saved.
 
 ## Data and export
 
-**Export CSV** writes **two** long-format files per export, one row per record,
-in strict time order:
+**Export CSV** writes **one** long-format file,
+`survey_log_<device>_<stamp>.csv`: one row per record, every record type, in
+strict time order. `record_type` is one of:
 
-- `survey_log_<device>_<stamp>.csv` - `EVENT` and `TRACK` rows: the vessel track
-  and the timestamped tags and notes.
-- `focal_follows_<device>_<stamp>.csv` - `FOCAL`, `INTERVAL` and `BEHAVIOR` rows:
-  the follows, their surfacing and dive intervals, and every behaviour.
+| `record_type` | one row per |
+|---|---|
+| `TRACK` | vessel position, every 10 s and on every logged action |
+| `EVENT` | a quick tag or a free note |
+| `FOCAL` | a focal follow (start, end, whale ID) |
+| `INTERVAL` | a surfacing or dive within a follow |
+| `BEHAVIOR` | one timestamped behaviour - blow, breach, fluke up... |
 
-`focal_id` and `focal_uuid` are carried in **both** files. They are the only link
-between them - without them there is no way to pull the vessel track for a given
-follow. Join on `focal_uuid`.
+The five share one column set; columns that do not apply to a row are blank. So
+a track point has `lat`/`lon` and no `behavior`, and a `FOCAL` row has
+`whale_id` and no position.
 
-`seq` numbers rows within each file. Order across the two is recoverable from `ts`.
-
-Chrome treats the second automatic download as a popup, so it may ask once for
-permission to download multiple files. Allow it, or you get the survey log and
-not the focal file.
+Everything is in time order, so a follow reads straight down the file: the focal
+starts, an interval opens, blows and a breach come in with track points
+interleaved between them at their own timestamps. `focal_id`, `whale_id` and
+`focal_uuid` are joined onto every row belonging to a follow, including its
+track points, so `filter(focal_uuid == x)` gives you the whole follow with its
+track.
 
 The browser cannot append to a file on disk, so each export re-reads the whole
 database. Every file is a strict superset of the last; only the newest needs
@@ -318,10 +323,10 @@ sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere sign
 two-digit year handling, invalid-fix rejection, sentence reassembly across stream
 chunks, and the end-to-end sentence-to-fix pipeline.
 
-`test_export.js` - 56 assertions covering the CSV export. It evaluates `app.js`
-against an in-memory database and checks that no row is lost or duplicated across
-the two files, that the cross-file join survives, that the cadence floor holds
-between forced points, that forced points carry the event timestamp, and that
+`test_export.js` - 57 assertions covering the CSV export. It evaluates `app.js`
+against an in-memory database and checks that no row is lost or duplicated, that a
+follow's identity reaches its track points, that the cadence floor holds between
+forced points, that forced points carry the event timestamp, and that
 per-file `seq`, time order, whale-ID joining and surfacing numbering are correct.
 
 `tools/check_static.py` - there is no build step and no module system here, so
