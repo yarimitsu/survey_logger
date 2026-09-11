@@ -47,8 +47,21 @@ function updateGpsUI() {
   }
 }
 
+// Cleared and rescheduled on every incoming fix. Fires when the fix feed goes
+// silent long enough that stamping new records with the last known position
+// would be misleading. 15 s matches POSITION_STALE_MS in app.js.
+let gpsStaleTimer = null;
+
 function updatePositionUI(p) {
-  $('#coord-line').textContent = `${fmtCoord(p.lat)}, ${fmtCoord(p.lon)}`;
+  const coordLine = $('#coord-line');
+  coordLine.textContent = `${fmtCoord(p.lat)}, ${fmtCoord(p.lon)}`;
+  coordLine.classList.remove('gps-lost');
+  clearTimeout(gpsStaleTimer);
+  gpsStaleTimer = setTimeout(() => {
+    coordLine.classList.add('gps-lost');
+    coordLine.textContent = 'GPS lost';
+    setStatus('WARNING: GPS signal lost. Check the GPS receiver.');
+  }, 15000);
   updateGpsUI();
   if (App.state.map) {
     if (!App.state.posMarker) {

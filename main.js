@@ -143,16 +143,20 @@ function wireControls() {
     });
   }
 
-  // Behaviour buttons. Blow keeps its special meaning: the first blow of a
-  // surfacing doubles as "whale is up", so during a dive it closes the dive and
-  // opens a new SURFACE interval and the blow lands on the new surfacing.
+  // Behaviour buttons. Three behaviours auto-open an interval:
+  //
+  //   blow      → SURFACE. The first blow is "whale is up", so during a dive it
+  //               closes the dive and opens a new surfacing before the blow lands.
+  //
+  //   fluke up  → DIVE. A fluke-up is the start of a dive; if not already in a
+  //   fluke down   dive it closes the surfacing and opens one before the record
+  //               is written.
+  //
   // switchInterval sets App.state.focalInterval synchronously, so a second tap
   // arriving mid-write sees the new interval and neither switches again nor
-  // files its blow against the closed dive.
+  // files its observation against the closed interval.
   //
-  // Every other behaviour is filed against whatever interval is already open. A
-  // fluke-up marks a dive starting, not a surfacing, so auto-opening one would
-  // be wrong; and a breach seen mid-dive is still a real observation.
+  // All other behaviours are filed against whatever interval is already open.
   UI.renderBehaviorGrid(async (behavior) => {
     if (!App.state.focal) return;
     if (behavior === 'blow') {
@@ -168,6 +172,15 @@ function wireControls() {
       // Bumped locally before the write so the number moves on the tap;
       // countBlows() scans the whole store and must not sit in between.
       UI.bumpBlowCount();
+    } else if (behavior === 'fluke up' || behavior === 'fluke down') {
+      const needsNewDive =
+        !App.state.focalInterval || App.state.focalInterval.type !== 'DIVE';
+      if (needsNewDive) {
+        await App.switchInterval('DIVE');
+        UI.setActiveIntervalButton('DIVE');
+        UI.clearOptionalFields();
+        UI.startIntervalTimer();
+      }
     }
     UI.flashBehavior(behavior);
     await App.logBehavior(behavior);

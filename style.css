@@ -49,6 +49,7 @@ body {
 
 #device-label { font-weight: 600; color: var(--text-dim); font-size: 13px; }
 #coord-line { font-size: 15px; letter-spacing: 0.3px; }
+#coord-line.gps-lost { color: var(--danger); font-weight: 700; }
 
 button { font-family: inherit; border: none; cursor: pointer; }
 

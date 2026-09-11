@@ -89,8 +89,14 @@ async function forceTrackPoint(ts) {
   await maybeLogTrackPoint({ ...p, ts: ts || Date.now() }, true);
 }
 
+// Matches GPS.FIX_STALE_MS: after this long without a fix the position is not
+// trustworthy enough to stamp onto a new record.
+const POSITION_STALE_MS = 15000;
+
 function currentPositionOrNull() {
-  return state.lastPosition;
+  const p = state.lastPosition;
+  if (!p || Date.now() - p.ts > POSITION_STALE_MS) return null;
+  return p;
 }
 
 // ---------- events (quick tags + free notes) ----------

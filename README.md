@@ -1,228 +1,85 @@
 # Survey Logger
 
-Offline-first field logger for marine mammal surveys: a vessel track, timestamped
-event tags, and focal-follow records (surfacing/dive intervals, blow counts,
-behaviour, distance and bearing). Runs entirely in the browser, stores everything
-in IndexedDB on the device, and exports one cumulative CSV.
+Offline-first browser app for marine mammal focal follows: vessel track, event tags,
+surfacing/dive intervals, blow counts, and behaviour records. Stores everything in
+IndexedDB; exports one cumulative CSV.
 
-Built to work with no internet connection on either a Windows laptop with
-a USB GPS or an iPad using its internal GPS.
+Works with no internet. Runs on a Windows laptop with a USB GPS or an iPad using its
+internal GPS.
 
 ---
 
 ## Quick start
 
-### Laptop (the primary field setup)
-
-From the repository directory:
+### Laptop
 
     python -m http.server 8080 --bind 127.0.0.1
 
-Open **http://localhost:8080/** in **Chrome or Edge**.
-
-This needs no internet once the repository is cloned and map tiles are cached
-(see *Offline* below). It must be served over http — opening `index.html` as a
-`file://` URL will not work, because service workers refuse to register there.
+Open **http://localhost:8080** in Chrome or Edge. Must be served — `file://` URLs
+won't work (service worker restriction).
 
 ### iPad
 
-Open the GitHub Pages URL for this repository in Safari and add it to the home
-screen. iPads use their internal GPS via `navigator.geolocation`; there is no USB
-GPS path on iOS.
+Open the GitHub Pages URL in Safari and add to the home screen.
 
 ---
 
-## USB GPS (COM3, 4800 baud)
+## GPS
 
-1. Plug in the receiver. Confirm it appears in Device Manager under
-   *Ports (COM & LPT)*; the app is written for **COM3 at 4800 baud**, the NMEA
-   0183 default.
-2. Open the app in Chrome or Edge over `http://localhost:8080`.
-3. Click **Connect GPS** in the top bar and pick the COM port from the browser's
-   picker.
+Click **Connect GPS** and pick the COM port. The button turns green while the serial
+feed is live. The receiver is reconnected automatically after an unplug or sleep/wake.
 
-The button turns green and reads **USB GPS** while the serial feed is live.
-
-**What is parsed.** `RMC` and `GGA` sentences, from any talker ID (`$GP`, `$GN`,
-`$GL`, `$GA`, `$BD`, `$QZ` — most modern receivers emit `$GN`, not `$GP`).
-Checksums are verified. Sentences reporting no valid fix (`RMC` status `V`,
-`GGA` fix quality `0`) are discarded rather than logged, so a receiver that is
-still acquiring cannot write a stale or null position into the track.
-
-**If the feed drops.** An unplugged receiver, a sleep/wake cycle, or a driver
-hiccup is caught and the port is reopened automatically every 3 seconds. A feed
-that goes silent without erroring — the usual way a track dies mid-survey —
-triggers a warning after 15 seconds and a forced reconnect after 30. Watch the
-status line.
+If the fix feed goes silent for 15 seconds the coordinate display turns red and reads
+**GPS lost**. Stale coordinates are not written to new records — lat/lon on events,
+behaviours, and intervals will be blank until the signal returns.
 
 ---
 
-## Map layers
+## Focal follow behaviour buttons
 
-The map has a layer control in the top right.
-
-**Base layers**
-
-- **Nautical chart (NOAA ENC)** - the default. NOAA's Electronic Navigational
-  Chart service: soundings, depth contours, depth areas, navaids, shoreline.
-  This is the authoritative chart data for US waters and is what to read depth
-  from.
-- **OpenStreetMap** - land detail and place names. No bathymetry.
-- Any layer cached to disk appears as *(offline)* and becomes the default when
-  present.
-
-**Overlay**
-
-- **Seamarks (OpenSeaMap)** - buoys, beacons and lights, drawn over whichever
-  base layer is active.
-  
----
-
-## Offline map tiles
-
-Tiles are downloaded to disk and served from `localhost`, rather than relying on
-
-
-**Check that it covers your transects** and pass `--bbox` if not.
-
-**Tiles are not in the repository.** They are large, binary and derived; `tiles/`
-is gitignored. Run the fetcher once on each machine after cloning.
-
-**OpenStreetMap:** bulk downloading from `tile.openstreetmap.org` is against the
-[OSMF tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
-`--source osm` exists for a small land-context cache and is throttled to one
-request per second. NOAA's chart service is US Government work in the public
-domain and carries no such restriction, which is why it is the default. Keep OSM
-caching small, or skip it.
-
-### The iPad
-
-iPads cannot run the fetcher. There the service worker's runtime cache is still
-the only mechanism: **before leaving the dock**, on wifi, open the app and pan
-and zoom over the survey area at every zoom level you expect to use. A tile that
-has never been displayed is not cached.
-
-| Works offline | Needs the network |
-|---|---|
-| USB GPS position and track logging | Tiles outside the cached area or zoom range |
-| All logging, IndexedDB storage, CSV export | First load from GitHub Pages with an empty cache |
-| Cached tiles (laptop), previously-viewed tiles (iPad) | The online NOAA / OSM / OpenSeaMap layers |
-| The app shell | |
-
-`navigator.storage.persist()` is requested at startup. If the browser refuses, the
-status line says so - export more often, because IndexedDB is the only copy of
-the data until a CSV is saved.
+- **Blow** — during a dive, closes the dive and opens a new surfacing before logging.
+- **Fluke up / Fluke down** — if not already in a dive, closes the surfacing and opens a new dive before logging.
+- All other behaviours log against whatever interval is already open.
 
 ---
 
-## Data and export
+## Export
 
-**Export CSV** writes **one** long-format file,
-`survey_log_<device>_<stamp>.csv`: one row per record, every record type, in
-strict time order. `record_type` is one of:
+**Export CSV** writes one long-format file, all record types, in time order:
 
 | `record_type` | one row per |
 |---|---|
 | `TRACK` | vessel position, every 10 s and on every logged action |
-| `EVENT` | a quick tag or a free note |
-| `FOCAL` | a focal follow (start, end, whale ID) |
-| `INTERVAL` | a surfacing or dive within a follow |
-| `BEHAVIOR` | one timestamped behaviour - blow, breach, fluke up... |
+| `EVENT` | quick tag or free note |
+| `FOCAL` | focal follow (start, end, whale ID) |
+| `INTERVAL` | surfacing or dive |
+| `BEHAVIOR` | one timestamped behaviour (blow, fluke up, breach, …) |
 
-The five share one column set; columns that do not apply to a row are blank. So
-a track point has `lat`/`lon` and no `behavior`, and a `FOCAL` row has
-`whale_id` and no position.
+Columns that don't apply to a row are blank. Every export is a superset of the last;
+keep only the newest file.
 
-Everything is in time order, so a follow reads straight down the file: the focal
-starts, an interval opens, blows and a breach come in with track points
-interleaved between them at their own timestamps. `focal_id`, `whale_id` and
-`focal_uuid` are joined onto every row belonging to a follow, including its
-track points, so `filter(focal_uuid == x)` gives you the whole follow with its
-track.
+**Merging two devices:** Export JSON on each, Import JSON on one, then export CSV.
+Record IDs are `device_id + uuid` so there are no collisions.
 
-The browser cannot append to a file on disk, so each export re-reads the whole
-database. Every file is a strict superset of the last; only the newest needs
-keeping.
+---
 
-Two columns are specific to the position source, and are populated on `TRACK`
-rows:
+## Offline map tiles
 
-- `gps_source` — `serial` (USB receiver) or `device` (internal/OS location).
-  A survey that starts on the laptop's location service and switches to the USB
-  puck partway through has a step change in accuracy; this is the only way to see
-  it afterwards. Blank on points recorded before the USB GPS existed.
-- `gps_time_utc` — the receiver's own UTC, from `RMC`. The `ts` / `time_utc`
-  columns stay on the device clock so all record types remain joinable, but a
-  laptop off the network for a week can drift by minutes, and this column is what
-  detects that.
-- `trigger` - `cadence` for a point written by the 10-second timer, `event` for
-  one written because something was logged. Lets a track be thinned back to pure
-  cadence without losing which points coincide with an observation.
-
-### Behaviour vs activity
-
-Two different columns, deliberately named apart:
-
-- **`behavior`** - one timestamped observation, on a `BEHAVIOR` row. One of
-  `blow`, `breach`, `lunge`, `fluke up`, `fluke down`, `slap`, `other`. Each tap
-  is its own row with its own `ts`, so a surfacing with four blows and a breach
-  is five rows.
-- **`activity`** - the sticky state of the follow (`unknown`, `transit`,
-  `foraging`), carried on `FOCAL` and `INTERVAL` rows. It applies until you
-  change it, and it was called `behavior` before 2026-09-09. Follows recorded
-  under the old name are renamed on upgrade and on import, and the export falls
-  back to the old field anyway, so nothing recorded earlier loses its state.
-
-`secs_into_surfacing` gives each behaviour's offset from the start of the
-interval it fell in, and `surfacing_id` (e.g. `FocalA-S3`) ties it to a
-particular surfacing.
-
-**Blow is the only behaviour that changes the interval.** Tapping it during a
-dive closes the dive and opens a new surfacing, the way the old blow button did,
-because the first blow is what tells you the whale is up. Every other behaviour
-is filed against whatever interval is already open and changes nothing - a fluke
-up marks a dive *starting*, and a breach seen mid-dive is still a real
-observation rather than a reason to end the dive. The blow count in the panel
-counts blows only, so a breach does not inflate it.
-
-To change the button list, edit `BEHAVIORS` in `app.js`; the panel is built from
-it, so the buttons and the exported values cannot drift apart. Add to the list
-rather than renaming, once a season has data - the strings are stored verbatim.
-
-**Track cadence.** A point every 10 seconds, plus a forced point on every logged
-action: event tag, note, focal start and end, interval switch, and every
-behaviour. A
-forced point takes its position from the last fix - there is no way to request
-one synchronously, and at 1 Hz on the USB receiver it is under a second stale -
-but its timestamp from the event, so it sorts alongside the record it
-accompanies.
-
-**Merging two devices.** Use **Export JSON** on each device and **Import JSON** on
-one of them, then export a combined CSV. Every record id is `device_id + uuid`, so
-a merge is a plain `put()` with no collision logic. Focal labels are per-device —
-two iPads will both produce `FocalA` — so use `device_label` to tell them apart.
+Run `tools/fetch_tiles.py` once after cloning to download NOAA chart tiles for the
+survey area. Tiles are gitignored. On iPad, pan and zoom over the area on wifi before
+going to sea — any tile you haven't viewed won't be cached.
 
 ---
 
 ## Files
 
-    index.html      layout and markup
-    style.css       styling
-    db.js           IndexedDB wrapper
-    gps.js          position sources: Web Serial NMEA and navigator.geolocation
-    app.js          core logic, focal follows, CSV/JSON export
-    ui.js           DOM rendering and Leaflet map drawing
-    main.js         startup and event wiring
-    sw.js           service worker (offline app shell + runtime tile cache)
-    test_gps.js     NMEA parser test harness
-    test_export.js  CSV export split test harness
-    tools/          fetch_tiles.py - offline tile downloader
-                    check_static.py - cross-file consistency checks
-    tiles/          downloaded tiles (gitignored; run the fetcher)
-    _status.md      running project status, decisions, and open issues
-
-The service worker is deliberately disabled on `localhost` and `127.0.0.1`.
-Cache-first is right in the field and wrong while editing, where it serves
-two-round-old files.
-
----
+    index.html / style.css          layout and styling
+    db.js                           IndexedDB wrapper
+    gps.js                          Web Serial NMEA + navigator.geolocation
+    app.js                          core logic, export
+    ui.js                           DOM and Leaflet map
+    main.js                         startup and event wiring
+    sw.js                           service worker (offline shell + tile cache)
+    test_gps.js / test_export.js    test harnesses
+    tools/fetch_tiles.py            offline tile downloader
+    tools/check_static.py           cross-file consistency checks
