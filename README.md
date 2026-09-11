@@ -204,45 +204,6 @@ two iPads will both produce `FocalA` — so use `device_label` to tell them apar
 
 ---
 
-## Tests
-
-    node test_gps.js
-    node test_export.js
-    node test_startup.js
-    python tools/check_static.py
-
-`test_gps.js` - 44 assertions covering NMEA parsing: checksums against canonical published
-sentences, `ddmm.mmmm` / `dddmm.mmmm` coordinate conversion with hemisphere signs
-(round-tripped against a real Cook Inlet position, 59.62882, -151.6138883),
-two-digit year handling, invalid-fix rejection, sentence reassembly across stream
-chunks, and the end-to-end sentence-to-fix pipeline.
-
-`test_export.js` - 57 assertions covering the CSV export. It evaluates `app.js`
-against an in-memory database and checks that no row is lost or duplicated, that a
-follow's identity reaches its track points, that the cadence floor holds between
-forced points, that forced points carry the event timestamp, and that
-per-file `seq`, time order, whale-ID joining and surfacing numbering are correct.
-
-`tools/check_static.py` - there is no build step and no module system here, so
-nothing otherwise catches a renamed function or a selector pointing at an id that
-no longer exists. It checks that every `$('#id')` matches an element in
-`index.html`, that every `UI.`/`GPS.`/`App.`/`DB.` reference is actually exported,
-that scripts load in dependency order, that every local asset is in the service
-worker's shell list, and that `NOAA_LAYERS` is identical in `ui.js` and
-`tools/fetch_tiles.py` - a mismatch there would make the cached chart silently
-differ from the online one, which you would not discover until you were offline.
-
-`test_startup.js` - 16 assertions that startup runs to completion and every
-button actually gets a handler. `main.js` does all of startup inside one async
-`init()`, and a rejection anywhere in it is caught by a single handler at the
-bottom - so one broken await skips `wireControls()` and leaves the entire UI
-inert, with one line of status text as the only clue.
-
-There is no automated test of the map layers or of real serial hardware; those
-are exercised by hand.
-
----
-
 ## Files
 
     index.html      layout and markup
