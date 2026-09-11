@@ -5,7 +5,7 @@ event tags, and focal-follow records (surfacing/dive intervals, blow counts,
 behaviour, distance and bearing). Runs entirely in the browser, stores everything
 in IndexedDB on the device, and exports one cumulative CSV.
 
-Built to work with no internet connection at all, on either a Windows laptop with
+Built to work with no internet connection on either a Windows laptop with
 a USB GPS or an iPad using its internal GPS.
 
 ---
@@ -30,21 +30,9 @@ Open the GitHub Pages URL for this repository in Safari and add it to the home
 screen. iPads use their internal GPS via `navigator.geolocation`; there is no USB
 GPS path on iOS.
 
-`http://<LAN-IP>:8080` will **not** work on an iPad. It is not a secure context,
-so iOS Safari gives neither geolocation nor a service worker. Use https (GitHub
-Pages) or the laptop.
-
 ---
 
 ## USB GPS (COM3, 4800 baud)
-
-The laptop's own location service is useless in the field: Windows positions from
-wifi and cell towers, not satellites, so with no internet it returns nothing or a
-fix tens of kilometres out. The USB receiver is what makes the laptop viable.
-
-The page reads the COM port directly using the **Web Serial API** — no bridge
-process, no background service, no additional install beyond whatever driver the
-USB receiver already needs.
 
 1. Plug in the receiver. Confirm it appears in Device Manager under
    *Ports (COM & LPT)*; the app is written for **COM3 at 4800 baud**, the NMEA
@@ -52,14 +40,6 @@ USB receiver already needs.
 2. Open the app in Chrome or Edge over `http://localhost:8080`.
 3. Click **Connect GPS** in the top bar and pick the COM port from the browser's
    picker.
-
-The click is required by the Web Serial specification — a page cannot open a port
-without a user gesture — so the app cannot connect automatically at startup.
-After the first time, permission persists for that browser profile. If the GPS
-is the only serial device this browser has been given access to, the app reuses
-it silently; if you have also authorised something else (a CTD, a radio), the
-picker appears each time, because the browser gives no reliable way to tell which
-of several granted ports is the right one without asking.
 
 The button turns green and reads **USB GPS** while the serial feed is live.
 
@@ -74,40 +54,6 @@ hiccup is caught and the port is reopened automatically every 3 seconds. A feed
 that goes silent without erroring — the usual way a track dies mid-survey —
 triggers a warning after 15 seconds and a forced reconnect after 30. Watch the
 status line.
-
-**This reconnect path has not yet been tested against the actual receiver.**
-At the dock, with the app running and the track on, unplug the puck and watch
-the status line, then plug it back in and confirm the track resumes. Five
-minutes, and it is the difference between a claim and a verified behaviour.
-
-### Sharing the GPS with another program
-
-**You cannot.** A Windows COM port is exclusive: exactly one process may have it
-open at a time. If SeaLog, OpenCPN, a chart plotter, or even another browser tab
-running this app already holds COM3, Connect GPS will fail, and the status line
-will say so and name this as the reason.
-
-If the port is busy, the fixes are, in order of preference:
-
-1. **Close the other program.** Simplest, and right if you do not actually need
-   both at once.
-2. **Use a virtual COM port splitter.** A driver reads the real port once and
-   presents the same NMEA stream on two or more virtual ports, one per program.
-   `com0com` with `hub4com` is the free, open-source option on Windows; VSPE is
-   the common commercial one. Point this app at one virtual port and the other
-   program at the other. Untested here - if you go this way, confirm at the dock
-   that both programs show a moving position before relying on it.
-3. **A second receiver.** USB GPS pucks are cheap, and two receivers avoid the
-   whole problem plus give you a spare when one fails at sea.
-
-Clicking **USB GPS** while connected disconnects and releases the port, so you
-can hand it to another program without closing the app.
-
-**Browser support.** Web Serial is Chrome and Edge on desktop only. On Safari,
-Firefox, or any iPad, the button reads **Device GPS** and the app falls back to
-`navigator.geolocation`. Only one source is ever live at a time; connecting the
-USB receiver stops the device watch, because interleaving two position streams
-into one track produces a line that zigzags between them.
 
 ---
 
@@ -129,63 +75,13 @@ The map has a layer control in the top right.
 
 - **Seamarks (OpenSeaMap)** - buoys, beacons and lights, drawn over whichever
   base layer is active.
-
-NOAA replaced its raster chart (RNC) tile services in 2025; `tileservice.charts.noaa.gov`
-and `seamlessrnc.nauticalcharts.noaa.gov` both time out and are not used here.
-The ENC service at `gis.charttools.noaa.gov` is the current one.
-
-One known gap: the ENC service is requested with `layers=0,1,2,3,4,5,6`, but its
-GetCapabilities document lists layers 0-12 **with no titles**, so there is no
-published mapping from those numbers to ENC usage bands (Overview, General,
-Coastal, Approach, Harbour). That subset was chosen by rendering Prince William
-Sound and looking at the result. Which band appears at which zoom is untested.
-If the chart is too cluttered or too sparse at working zoom, change
-`NOAA_LAYERS` in `ui.js` and `tools/fetch_tiles.py`.
-
+  
 ---
 
 ## Offline map tiles
 
 Tiles are downloaded to disk and served from `localhost`, rather than relying on
-the service worker to have happened to cache them. No eviction risk, no "did I
-pan far enough", no first-load problem.
 
-    python tools/fetch_tiles.py
-
-That fetches NOAA ENC tiles for Prince William Sound and its Gulf approaches,
-zoom 8-13, into
-`tiles/noaa/{z}/{x}/{y}.png` and writes `tiles/manifest.json`. The app reads that
-manifest at startup: if it is there the cached layers are used and made the
-default; if not, the app is online-only and the status line says so.
-
-The script prints the tile count per zoom and samples a few tiles to estimate the
-download before asking to proceed. For the default area and zoom range that is
-**12,377 tiles, about 110 MB** on disk. Measured rate is roughly 90 tiles a
-minute, so budget **two to two and a half hours** and start it the night before.
-
-The size the script predicts up front is an extrapolation from an 8-tile sample
-and runs high - it sampled 20.7 KB a tile against a true mean nearer 9 KB, so it
-guessed 250 MB for a 110 MB download. Treat its estimate as an upper bound.
-
-It skips tiles already on disk, so an interrupted run resumes where it stopped,
-and a rerun after widening the box only fetches the new edges. If a tile times
-out the run carries on and reports the count; the manifest records
-`"complete": false` and the status line says INCOMPLETE, so just rerun to fill
-the gaps.
-
-    python tools/fetch_tiles.py --zoom 8 14                # ~48,000 tiles; not casually
-    python tools/fetch_tiles.py --bbox 59.0 -149.5 61.5 -144.8
-    python tools/fetch_tiles.py --source osm               # see the policy note below
-
-Default bounding box is **S 59.30, W -149.20, N 61.45, E -145.20**:
-
-- south to 59.30, which is below Cape Cleare (59.77) at the foot of Montague
-  Island. A tight box around the Sound stops near 59.95 and cuts off the whole
-  southern half of Montague Strait and the Hinchinbrook Entrance approaches.
-  It also brings Middleton Island (59.43 N, -146.33 W) inside the cache.
-- west to -149.20: Whittier, Passage Canal, Cape Puget.
-- north to 61.45: Port Valdez, Columbia Bay, College Fiord.
-- east to -145.20: Cordova, Orca Bay.
 
 **Check that it covers your transects** and pass `--bbox` if not.
 
@@ -205,8 +101,6 @@ iPads cannot run the fetcher. There the service worker's runtime cache is still
 the only mechanism: **before leaving the dock**, on wifi, open the app and pan
 and zoom over the survey area at every zoom level you expect to use. A tile that
 has never been displayed is not cached.
-
-### What works with no connection
 
 | Works offline | Needs the network |
 |---|---|
@@ -371,33 +265,3 @@ Cache-first is right in the field and wrong while editing, where it serves
 two-round-old files.
 
 ---
-
-## Known issues
-
-- A focal follow can only have its whale ID and focal ID edited while it is open.
-  Photo-ID often happens after the encounter, so post-hoc editing of a closed
-  focal is the obvious next feature.
-- Closing the app mid-focal leaves that interval's `end_ts` null. There is no
-  recovery path on startup.
-- `icon-192.png` and `icon-512.png` do not exist. Only affects the home-screen
-  icon.
-- Focal labels restart at `FocalA` after **Clear all survey data**. Keep old
-  exports separate, or separate them by date.
-
-See `_status.md` for the full list and the reasoning behind the design decisions.
-
----
-
-## Why not SeaLog
-
-SeaLog (ABR) was reviewed as a reference for track recording. It does not record a
-track. Every row in its output is an observer-triggered record stamped with the
-position and GPS time at the moment of the tap; in a sample survey file all 3,686
-data rows were type `USER`, spaced irregularly from 12 to 80 seconds apart. Any
-"track" is only what the observations happen to trace, and it stops whenever
-observers stop tapping.
-
-This app keeps a dedicated `track_points` store on a 30-second floor, independent
-of observer activity, which is the behaviour the survey needs. Nothing was carried
-over from SeaLog except the practice of storing device time and GPS time in
-separate columns.
