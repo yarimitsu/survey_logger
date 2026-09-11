@@ -20,7 +20,7 @@ won't work (service worker restriction).
 
 ### iPad
 
-Open the GitHub Pages URL in Safari and add to the home screen.
+Open **https://yarimitsu.github.io/survey_logger/** in Safari and add to the home screen.
 
 ---
 

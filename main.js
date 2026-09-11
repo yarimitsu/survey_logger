@@ -65,8 +65,13 @@ function wireControls() {
   UI.$('#gps-btn').addEventListener('click', async () => {
     if (GPS.activeSource() === 'serial') {
       await GPS.disconnectSerial();
-    } else {
+    } else if (GPS.isSerialSupported()) {
       await GPS.connectSerial();
+    } else {
+      // No Web Serial (iPad/Safari): the button has nothing to connect, but
+      // retrying the device watch lets a survey recover from an earlier
+      // permission denial without a full page reload.
+      GPS.startDeviceWatch();
     }
     UI.updateGpsUI();
   });
