@@ -40,12 +40,15 @@
     <div id="tabs">
       <button class="tab-btn active" data-tab="log">Log</button>
       <button class="tab-btn" data-tab="focal">Focal</button>
+      <button class="tab-btn" data-tab="trawl">Trawl</button>
     </div>
 
     <!-- ---------- Log tab ---------- -->
     <div id="tab-log" class="tab-panel">
       <div id="tag-grid"></div>
       <button id="note-btn" class="wide-btn">+ Note</button>
+      <button id="transect-toggle" class="wide-btn transect-off">Start Transect</button>
+      <button id="trawl-btn" class="wide-btn trawl">Start Trawl</button>
       <button id="focal-btn" class="wide-btn focal">Start Focal Follow</button>
 
       <div class="section-label">Data</div>
@@ -124,6 +127,31 @@
 
         <button id="focal-note-btn" class="wide-btn">+ Note</button>
         <button id="end-focal-btn" class="wide-btn danger">End Focal Follow</button>
+      </div>
+
+    </div>
+
+    <!-- ---------- Trawl tab ---------- -->
+    <div id="tab-trawl" class="tab-panel hidden">
+
+      <div id="trawl-idle">
+        <p class="muted">No trawl running. Start one from the Log tab.</p>
+      </div>
+
+      <div id="trawl-active" class="hidden">
+        <h2>Trawl <span id="trawl-label"></span></h2>
+
+        <div id="trawl-timer">&mdash;</div>
+
+        <div class="section-label">Gear</div>
+        <div class="field-row">
+          <label>Scope (m)<input id="field-scope" type="number" inputmode="numeric" min="0"></label>
+          <label>Speed (kt)<input id="field-speed" type="number" inputmode="decimal" step="0.1" min="0"></label>
+          <label>RPM<input id="field-rpm" type="number" inputmode="numeric" min="0"></label>
+        </div>
+
+        <button id="trawl-note-btn" class="wide-btn">+ Note</button>
+        <button id="end-trawl-btn" class="wide-btn danger">End Trawl</button>
       </div>
 
     </div>

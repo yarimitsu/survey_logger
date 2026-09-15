@@ -33,6 +33,21 @@ If the fix feed goes silent for 15 seconds the coordinate display turns red and 
 **GPS lost**. Stale coordinates are not written to new records — lat/lon on events,
 behaviours, and intervals will be blank until the signal returns.
 
+**Wi-Fi-only iPad:** these have no GPS chip — position comes entirely from Apple's
+Wi-Fi-positioning lookup, which needs an actual path to the internet, not just an
+associated Wi-Fi network. A vessel's onboard Wi-Fi with no internet uplink will leave
+the iPad unable to get a fix at all (`Device GPS error: ... kCLErrorDomain error 0`).
+That's expected, not a bug — run the iPad as a timestamp-only logger in that case (lat/lon
+blank on its records) and merge with the laptop's USB-GPS track afterward via Export
+JSON / Import JSON, per **Merging two devices** below. A Cellular (LTE/5G) iPad model
+has a real GPS chip and does not have this limitation.
+
+**Reboots and long gaps:** if track points more than 2 minutes apart land next to each
+other (a crash, a reboot, the toggle left off), the map draws a new line segment
+instead of connecting them — a real gap is not a path you actually surveyed, so it is
+never drawn as one. The two segments just aren't joined; nothing is deleted or marked,
+and CSV/JSON export is unaffected.
+
 ---
 
 ## Focal follow behaviour buttons
@@ -54,6 +69,12 @@ behaviours, and intervals will be blank until the signal returns.
 | `FOCAL` | focal follow (start, end, whale ID) |
 | `INTERVAL` | surfacing or dive |
 | `BEHAVIOR` | one timestamped behaviour (blow, fluke up, breach, …) |
+| `TRANSECT` | on/off-effort transect (start, end) |
+| `TRAWL` | trawl on/off-effort (start, end, scope, speed, RPM) |
+
+`TRANSECT` and `TRAWL` also stamp their id (`transect_id` / `trawl_id`) onto every
+other row that falls inside their time range, so a behaviour or event logged mid-trawl
+carries both without having to be joined by hand.
 
 Columns that don't apply to a row are blank. Every export is a superset of the last;
 keep only the newest file.

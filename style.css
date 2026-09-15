@@ -165,6 +165,11 @@ button { font-family: inherit; border: none; cursor: pointer; }
 .wide-btn.focal { background: var(--amber); color: #251500; border: none; }
 .wide-btn.danger { background: var(--danger); color: #250505; border: none; }
 .wide-btn.export { background: var(--accent); color: #06120c; border: none; }
+/* Same start/running colors as the focal button (amber) and its end button
+   (red), so the two "runs until you end it" controls read the same way. */
+#transect-toggle.transect-off { background: var(--amber); color: #251500; border: none; }
+#transect-toggle.transect-on { background: var(--danger); color: #250505; border: none; }
+.wide-btn.trawl { background: var(--amber); color: #251500; border: none; }
 
 .link-col { display: flex; flex-direction: column; align-items: flex-start; }
 .link-btn {
@@ -320,6 +325,27 @@ button { font-family: inherit; border: none; cursor: pointer; }
 }
 
 #focal-note-btn { margin-top: 12px; }
+
+/* ---------- trawl tab ---------- */
+
+#trawl-active h2 { margin: 0 0 8px; font-size: 16px; color: var(--amber); }
+#trawl-label { color: var(--text); font-weight: 800; }
+
+/* Elapsed time since the trawl started; always amber since there's only one
+   state to show, unlike the focal interval timer's surface/dive coding. */
+#trawl-timer {
+  font-size: 26px;
+  font-weight: 800;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  margin-bottom: 6px;
+}
+
+#trawl-note-btn { margin-top: 12px; }
 
 /* ---------- modals ---------- */
 

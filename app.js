@@ -10,11 +10,15 @@ const state = {
   tags: [],
   map: null,
   tileManifest: null,      // tiles/manifest.json, or null if not cached
-  trackLine: null,
+  trackLine: null,         // current segment; addLatLng target
+  trackSegments: [],       // every segment drawn so far, oldest first
+  lastTrackTs: null,       // ts of the last point actually drawn, for gap detection
   eventMarkers: [],
   posMarker: null,
   focal: null,             // current open focal record, or null
   focalInterval: null,     // current open focal_intervals record, or null
+  transect: null,          // current open transect record, or null
+  trawl: null,             // current open trawl record, or null
   surfacingNum: 0,         // display only; the exported number is derived from
                            // interval order so it stays correct after a merge
   activity: 'unknown',     // sticky activity for the current focal (transit/foraging)
@@ -334,6 +338,100 @@ async function endFocal() {
   state.surfacingNum = 0;
 }
 
+// ---------- transect (on/off-effort) ----------
+
+// Independent of the focal follow lifecycle: a follow can start and end while
+// a transect is running, and the CSV export joins both onto every row by time
+// range rather than requiring one to nest inside the other.
+async function nextTransectLabel() {
+  const all = await DB.getAll('transects');
+  let max = 0;
+  for (const t of all) {
+    if (t.device_id !== state.config.device_id) continue;
+    const n = parseInt((t.transect_id || '').replace(/^Transect\s*/i, ''), 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return `Transect ${max + 1}`;
+}
+
+async function startTransect() {
+  const rec = {
+    id: `${state.config.device_id}_${DB.uuid()}`,
+    device_id: state.config.device_id,
+    device_label: state.config.device_label,
+    transect_id: await nextTransectLabel(),
+    start_ts: Date.now(),
+    end_ts: null,
+    notes: '',
+  };
+  await DB.put('transects', rec);
+  state.transect = rec;
+  await forceTrackPoint(rec.start_ts);
+  return rec;
+}
+
+async function endTransect() {
+  if (!state.transect) return;
+  const now = Date.now();
+  state.transect.end_ts = now;
+  await DB.put('transects', state.transect);
+  await forceTrackPoint(now);
+  state.transect = null;
+}
+
+// ---------- trawl (on/off-effort gear) ----------
+
+// Independent of the focal follow and transect, same reasoning as transect: a
+// trawl can run alongside either, and the CSV export joins it onto every row
+// by time range rather than requiring one to nest inside another.
+async function nextTrawlLabel() {
+  const all = await DB.getAll('trawls');
+  let max = 0;
+  for (const t of all) {
+    if (t.device_id !== state.config.device_id) continue;
+    const n = parseInt((t.trawl_id || '').replace(/^Trawl\s*/i, ''), 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  return `Trawl ${max + 1}`;
+}
+
+async function startTrawl() {
+  const rec = {
+    id: `${state.config.device_id}_${DB.uuid()}`,
+    device_id: state.config.device_id,
+    device_label: state.config.device_label,
+    trawl_id: await nextTrawlLabel(),
+    start_ts: Date.now(),
+    end_ts: null,
+    scope_m: null,
+    speed_kt: null,
+    rpm: null,
+    notes: '',
+  };
+  await DB.put('trawls', rec);
+  state.trawl = rec;
+  await forceTrackPoint(rec.start_ts);
+  return rec;
+}
+
+// One value per trawl rather than a time series — scope/speed/RPM can be set
+// or corrected at any point while the net is down, same as whale ID on a
+// focal follow.
+async function updateTrawl(patch) {
+  if (!state.trawl) return;
+  Object.assign(state.trawl, patch);
+  await DB.put('trawls', state.trawl);
+}
+
+async function endTrawl() {
+  if (!state.trawl) return;
+  const now = Date.now();
+  state.trawl.end_ts = now;
+  await DB.put('trawls', state.trawl);
+  await forceTrackPoint(now);
+  state.trawl = null;
+}
+
 // ---------- tags ----------
 
 async function loadTags() {
@@ -361,7 +459,7 @@ async function deactivateTag(id) {
 // Survey data only. Device identity (meta) and the tag list are configuration,
 // not observations, so they survive and the next survey starts with the same
 // device name and the same custom tags.
-const SURVEY_STORES = ['events', 'track_points', 'focals', 'focal_intervals', 'behaviors'];
+const SURVEY_STORES = ['events', 'track_points', 'focals', 'focal_intervals', 'behaviors', 'transects', 'trawls'];
 
 async function surveyCounts() {
   const out = {};
@@ -373,6 +471,8 @@ async function clearSurveyData() {
   for (const name of SURVEY_STORES) await DB.clearStore(name);
   state.focal = null;
   state.focalInterval = null;
+  state.transect = null;
+  state.trawl = null;
   state.surfacingNum = 0;
   state.lastTrackLogTs = 0;
 }
@@ -381,7 +481,7 @@ async function clearSurveyData() {
 
 async function exportAll() {
   const dump = {};
-  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors']) {
+  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors', 'transects', 'trawls']) {
     dump[store] = await DB.getAll(store);
   }
   dump._exported_by = state.config.device_id;
@@ -399,7 +499,7 @@ async function importFile(file) {
   const text = await file.text();
   const dump = JSON.parse(text);
   let count = 0;
-  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors']) {
+  for (const store of ['tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors', 'transects', 'trawls']) {
     const rows = dump[store] || [];
     for (const row of rows) {
       // Pre-v2 focals and intervals call the sticky state `behavior`; it is
@@ -461,10 +561,12 @@ const BEHAVIORS = ['blow', 'breach', 'lunge', 'fluke up', 'fluke down', 'slap', 
 // happened, then where, then the ids needed to join.
 const ALL_COLUMNS = [
   'seq', 'record_type', 'ts', 'time_utc',
+  'transect_id', 'trawl_id',
   'focal_id', 'whale_id', 'surfacing_num', 'surfacing_id',
   'behavior', 'activity',
   'interval_type', 'end_ts', 'end_time_utc', 'duration_s',
   'quality', 'secs_into_surfacing',
+  'scope_m', 'speed_kt', 'rpm',
   'lat', 'lon', 'gps_source', 'gps_time_utc', 'trigger',
   'tag_label', 'notes',
   'distance_m', 'bearing_to_whale', 'swim_direction',
@@ -481,9 +583,9 @@ function downloadCSV(name, text) {
 }
 
 async function exportCSV() {
-  const [events, tracks, intervals, behaviors, focals] = await Promise.all([
+  const [events, tracks, intervals, behaviors, focals, transects, trawls] = await Promise.all([
     DB.getAll('events'), DB.getAll('track_points'), DB.getAll('focal_intervals'),
-    DB.getAll('behaviors'), DB.getAll('focals'),
+    DB.getAll('behaviors'), DB.getAll('focals'), DB.getAll('transects'), DB.getAll('trawls'),
   ]);
 
   const intervalById = new Map(intervals.map((i) => [i.id, i]));
@@ -548,7 +650,66 @@ async function exportCSV() {
     return null;
   }
 
+  // Same time-range join as focalAt, but for the coarser on/off-effort marker.
+  // Every record type gets it this way rather than at write time, so an event
+  // logged just before a transect closes still lands inside it.
+  const closedTransectsByDevice = new Map();
+  for (const t of transects) {
+    if (t.end_ts == null) continue;
+    if (!closedTransectsByDevice.has(t.device_id)) closedTransectsByDevice.set(t.device_id, []);
+    closedTransectsByDevice.get(t.device_id).push(t);
+  }
+  function transectAt(deviceId, ts) {
+    for (const t of closedTransectsByDevice.get(deviceId) || []) {
+      if (ts >= t.start_ts && ts <= t.end_ts) return t;
+    }
+    return null;
+  }
+
+  // Same time-range join again, for the trawl on/off-effort marker.
+  const closedTrawlsByDevice = new Map();
+  for (const t of trawls) {
+    if (t.end_ts == null) continue;
+    if (!closedTrawlsByDevice.has(t.device_id)) closedTrawlsByDevice.set(t.device_id, []);
+    closedTrawlsByDevice.get(t.device_id).push(t);
+  }
+  function trawlAt(deviceId, ts) {
+    for (const t of closedTrawlsByDevice.get(deviceId) || []) {
+      if (ts >= t.start_ts && ts <= t.end_ts) return t;
+    }
+    return null;
+  }
+
   const rows = [];
+
+  for (const t of transects) {
+    rows.push({
+      record_type: 'TRANSECT',
+      ts: t.start_ts,
+      end_ts: t.end_ts == null ? '' : t.end_ts,
+      duration_s: t.end_ts ? (t.end_ts - t.start_ts) / 1000 : '',
+      notes: t.notes || '',
+      device_id: t.device_id,
+      record_id: t.id,
+      transect_id: t.transect_id || '',
+    });
+  }
+
+  for (const t of trawls) {
+    rows.push({
+      record_type: 'TRAWL',
+      ts: t.start_ts,
+      end_ts: t.end_ts == null ? '' : t.end_ts,
+      duration_s: t.end_ts ? (t.end_ts - t.start_ts) / 1000 : '',
+      scope_m: t.scope_m == null ? '' : t.scope_m,
+      speed_kt: t.speed_kt == null ? '' : t.speed_kt,
+      rpm: t.rpm == null ? '' : t.rpm,
+      notes: t.notes || '',
+      device_id: t.device_id,
+      record_id: t.id,
+      trawl_id: t.trawl_id || '',
+    });
+  }
 
   for (const f of focals) {
     rows.push({
@@ -650,7 +811,7 @@ async function exportCSV() {
 
   // Strict time order. The rank tiebreak keeps a focal ahead of the interval it
   // opens at the same millisecond, and the id keeps ties fully deterministic.
-  const RANK = { FOCAL: 0, INTERVAL: 1, BEHAVIOR: 2, EVENT: 3, TRACK: 4 };
+  const RANK = { TRANSECT: 0, TRAWL: 1, FOCAL: 2, INTERVAL: 3, BEHAVIOR: 4, EVENT: 5, TRACK: 6 };
   rows.sort((a, b) =>
     a.ts - b.ts ||
     RANK[a.record_type] - RANK[b.record_type] ||
@@ -661,6 +822,14 @@ async function exportCSV() {
     r.time_utc = isoOrBlank(r.ts);
     r.end_time_utc = isoOrBlank(r.end_ts);
     r.device_label = deviceLabelById.get(r.device_id) || '';
+    if (r.record_type !== 'TRANSECT') {
+      const t = transectAt(r.device_id, r.ts);
+      r.transect_id = t ? t.transect_id : '';
+    }
+    if (r.record_type !== 'TRAWL') {
+      const tw = trawlAt(r.device_id, r.ts);
+      r.trawl_id = tw ? tw.trawl_id : '';
+    }
   });
 
   rows.forEach((r, i) => { r.seq = i + 1; });
@@ -692,6 +861,11 @@ const App = {
   logBehavior,
   countBlows,
   endFocal,
+  startTransect,
+  endTransect,
+  startTrawl,
+  updateTrawl,
+  endTrawl,
   loadTags,
   addTag,
   deactivateTag,

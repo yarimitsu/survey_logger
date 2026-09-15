@@ -15,7 +15,7 @@ function ok(name, cond, got) {
 
 const stores = {
   meta: [], tags: [], events: [], track_points: [], focals: [], focal_intervals: [],
-  behaviors: [], blows: [],
+  behaviors: [], blows: [], transects: [], trawls: [],
 };
 let n = 0;
 const DB = {

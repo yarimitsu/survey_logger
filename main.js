@@ -59,6 +59,67 @@ function wireControls() {
     UI.setStatus(App.state.trackOn ? 'Track logging started.' : 'Track logging stopped.');
   });
 
+  // Transect (on/off-effort) toggle. Independent of the focal follow: a focal
+  // can start and end while a transect keeps running underneath it.
+  UI.$('#transect-toggle').addEventListener('click', async () => {
+    if (App.state.transect) {
+      const ended = App.state.transect.transect_id;
+      await App.endTransect();
+      UI.setTransectToggle(false);
+      UI.setStatus(`${ended} ended.`);
+    } else {
+      const t = await App.startTransect();
+      // A transect without a vessel track is not much use, same reasoning as
+      // the focal follow: turn tracking on, and leave it on afterwards.
+      if (!App.state.trackOn) {
+        App.state.trackOn = true;
+        UI.setTrackToggle(true);
+      }
+      UI.setTransectToggle(true, t.transect_id);
+      UI.setStatus(`${t.transect_id} started — track on.`);
+    }
+  });
+
+  // Trawl (on/off-effort gear). Independent of focal follow and transect;
+  // opens its own tab the same way a focal follow does, since it carries
+  // fields (scope/speed/RPM) and a timer the Log tab toggle has no room for.
+  UI.$('#trawl-btn').addEventListener('click', async () => {
+    const t = await App.startTrawl();
+    // A trawl without a vessel track is not much use, same reasoning as the
+    // focal follow and transect: turn tracking on, and leave it on afterwards.
+    if (!App.state.trackOn) {
+      App.state.trackOn = true;
+      UI.setTrackToggle(true);
+    }
+    UI.setTrawlHeader(t);
+    UI.showTrawlPanel(true);
+    UI.startTrawlTimer();
+    UI.setStatus(`${t.trawl_id} started — track on.`);
+  });
+
+  // Saved on every keystroke, same reasoning as whale ID: 'change' only fires
+  // on blur, and these get edited while the net is down, not necessarily
+  // followed by a blur.
+  UI.$('#field-scope').addEventListener('input', (e) =>
+    App.updateTrawl({ scope_m: e.target.value ? Number(e.target.value) : null })
+  );
+  UI.$('#field-speed').addEventListener('input', (e) =>
+    App.updateTrawl({ speed_kt: e.target.value ? Number(e.target.value) : null })
+  );
+  UI.$('#field-rpm').addEventListener('input', (e) =>
+    App.updateTrawl({ rpm: e.target.value ? Number(e.target.value) : null })
+  );
+
+  UI.$('#trawl-note-btn').addEventListener('click', () => UI.openNotesPrompt(null));
+
+  UI.$('#end-trawl-btn').addEventListener('click', async () => {
+    const ended = App.state.trawl ? App.state.trawl.trawl_id : '';
+    await App.endTrawl();
+    UI.stopTrawlTimer();
+    UI.showTrawlPanel(false);
+    UI.setStatus(`${ended} ended.`);
+  });
+
   // USB GPS. requestPort() only opens the browser's port picker from inside a
   // user gesture, so this cannot be done automatically at startup — the click
   // is a requirement of the API, not a design choice.
@@ -232,6 +293,14 @@ function wireControls() {
   UI.$('#clear-data-btn').addEventListener('click', async () => {
     if (App.state.focal) {
       UI.setStatus('End the focal follow before clearing data.');
+      return;
+    }
+    if (App.state.transect) {
+      UI.setStatus('End the transect before clearing data.');
+      return;
+    }
+    if (App.state.trawl) {
+      UI.setStatus('End the trawl before clearing data.');
       return;
     }
     UI.$('#clear-export-result').textContent = '';

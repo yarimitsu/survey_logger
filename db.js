@@ -6,8 +6,10 @@ const DB_NAME = 'survey-logger';
 // 'blows' store was superseded by 'behaviors'. The old store is migrated but NOT
 // deleted - a half-completed copy that then dropped the source would lose field
 // data, and an empty object store costs nothing.
-const DB_VERSION = 2;
-const STORES = ['meta', 'tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors'];
+// v3: added 'transects' for on/off-effort tracking.
+// v4: added 'trawls' for trawl on/off-effort tracking (scope/speed/RPM).
+const DB_VERSION = 4;
+const STORES = ['meta', 'tags', 'events', 'track_points', 'focals', 'focal_intervals', 'behaviors', 'transects', 'trawls'];
 const LEGACY_BLOWS = 'blows';
 
 let _db = null;

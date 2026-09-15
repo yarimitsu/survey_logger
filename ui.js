@@ -64,12 +64,19 @@ function updatePositionUI(p) {
   }, 15000);
   updateGpsUI();
   if (App.state.map) {
+    const latlng = [p.lat, p.lon];
     if (!App.state.posMarker) {
-      App.state.posMarker = L.circleMarker([p.lat, p.lon], {
+      App.state.posMarker = L.circleMarker(latlng, {
         radius: 6, color: '#3ddc97', fillColor: '#3ddc97', fillOpacity: 1, weight: 2,
       }).addTo(App.state.map);
     } else {
-      App.state.posMarker.setLatLng([p.lat, p.lon]);
+      App.state.posMarker.setLatLng(latlng);
+    }
+    // Only recenter once the vessel actually leaves the visible area, not on
+    // every fix — panning on every point would fight anyone who has zoomed in
+    // on the chart or an event marker elsewhere on the track.
+    if (!App.state.map.getBounds().contains(latlng)) {
+      App.state.map.panTo(latlng);
     }
   }
 }
@@ -162,7 +169,9 @@ async function initMap() {
   Object.values(bases)[0].addTo(map);
   L.control.layers(bases, overlays, { position: 'topright' }).addTo(map);
 
-  App.state.trackLine = L.polyline([], { color: '#3ddc97', weight: 3 }).addTo(map);
+  App.state.trackSegments = [];
+  App.state.lastTrackTs = null;
+  newTrackSegment(map);
   App.state.tileManifest = manifest;
   // Say what the cache actually holds, not just that it exists. A run of
   // fetch_tiles.py that is still going, or was interrupted, leaves a real
@@ -177,9 +186,29 @@ async function initMap() {
   }
 }
 
+// A gap this large between consecutive track points means logging was off in
+// between — a crash, a reboot, the toggle switched off — not a receiver
+// hiccup: cadence writes every 10 s (TRACK_INTERVAL_MS) and a GPS dropout
+// recovers well within this window (gps.js FIX_DEAD_MS). Drawing a straight
+// line across a real gap would claim a path that was never actually
+// surveyed, so a point arriving after a gap this size starts a new line
+// segment instead of extending the last one.
+const TRACK_GAP_MS = 2 * 60 * 1000; // 2 minutes
+
+function newTrackSegment(map) {
+  const line = L.polyline([], { color: '#3ddc97', weight: 3 }).addTo(map);
+  App.state.trackSegments.push(line);
+  App.state.trackLine = line;
+  return line;
+}
+
 function drawTrackPoint(rec) {
   if (!App.state.map) return;
+  if (App.state.lastTrackTs != null && rec.ts - App.state.lastTrackTs > TRACK_GAP_MS) {
+    newTrackSegment(App.state.map);
+  }
   App.state.trackLine.addLatLng([rec.lat, rec.lon]);
+  App.state.lastTrackTs = rec.ts;
 }
 
 const TAG_COLORS = {
@@ -200,10 +229,11 @@ function drawEventMarker(rec) {
 async function loadExistingIntoMap() {
   const [tracks, events] = await Promise.all([DB.getAll('track_points'), DB.getAll('events')]);
   tracks.sort((a, b) => a.ts - b.ts);
-  for (const t of tracks) App.state.trackLine.addLatLng([t.lat, t.lon]);
+  for (const t of tracks) drawTrackPoint(t);
   for (const e of events) drawEventMarker(e);
   if (tracks.length) {
-    App.state.map.fitBounds(App.state.trackLine.getBounds(), { maxZoom: 13 });
+    const bounds = L.latLngBounds(App.state.trackSegments.flatMap((s) => s.getLatLngs()));
+    App.state.map.fitBounds(bounds, { maxZoom: 13 });
   }
 }
 
@@ -261,6 +291,8 @@ const CLEAR_LABELS = {
   focals: 'Focal follows',
   focal_intervals: 'Intervals',
   behaviors: 'Behaviors',
+  transects: 'Transects',
+  trawls: 'Trawls',
 };
 
 async function openClearModal() {
@@ -315,12 +347,23 @@ function setTrackToggle(on) {
   btn.classList.toggle('track-on', on);
 }
 
+// Same amber-start/red-running colors as the focal button and its end button,
+// so the two "runs until you end it" controls read the same way at a glance.
+function setTransectToggle(on, label) {
+  const btn = $('#transect-toggle');
+  btn.textContent = on ? 'End Transect' : 'Start Transect';
+  btn.title = on && label ? `Running: ${label}. Click to end it.` : '';
+  btn.classList.toggle('transect-off', !on);
+  btn.classList.toggle('transect-on', on);
+}
+
 function showTab(name) {
   for (const b of document.querySelectorAll('.tab-btn')) {
     b.classList.toggle('active', b.dataset.tab === name);
   }
   $('#tab-log').classList.toggle('hidden', name !== 'log');
   $('#tab-focal').classList.toggle('hidden', name !== 'focal');
+  $('#tab-trawl').classList.toggle('hidden', name !== 'trawl');
 }
 
 // The map is now the main view and never gets swapped out, so the focal module
@@ -404,6 +447,53 @@ function stopIntervalTimer() {
   $('#surfacing-line').textContent = '—';
 }
 
+// ---------- trawl panel ----------
+
+function setTrawlHeader(t) {
+  $('#trawl-label').textContent = t && t.trawl_id ? `— ${t.trawl_id}` : '';
+  $('#field-scope').value = t && t.scope_m != null ? t.scope_m : '';
+  $('#field-speed').value = t && t.speed_kt != null ? t.speed_kt : '';
+  $('#field-rpm').value = t && t.rpm != null ? t.rpm : '';
+}
+
+// The map is now the main view and never gets swapped out, so the trawl
+// module is a state of the sidebar rather than a panel that replaces the
+// controls — same reasoning as showFocalPanel.
+function showTrawlPanel(show) {
+  $('#trawl-active').classList.toggle('hidden', !show);
+  $('#trawl-idle').classList.toggle('hidden', show);
+  if (show) showTab('trawl');
+}
+
+let trawlTimerHandle = null;
+
+function updateTrawlTimer() {
+  const t = App.state.trawl;
+  const box = $('#trawl-timer');
+  if (!t) {
+    box.textContent = '—';
+    return;
+  }
+  // Derived from start_ts, not an accumulator, same reasoning as the focal
+  // interval timer: a throttled background tab still shows true elapsed time.
+  const secs = Math.max(0, Math.floor((Date.now() - t.start_ts) / 1000));
+  box.textContent = `Down ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+}
+
+function startTrawlTimer() {
+  stopTrawlTimer();
+  updateTrawlTimer();
+  trawlTimerHandle = setInterval(updateTrawlTimer, 1000);
+}
+
+function stopTrawlTimer() {
+  if (trawlTimerHandle !== null) {
+    clearInterval(trawlTimerHandle);
+    trawlTimerHandle = null;
+  }
+  $('#trawl-timer').textContent = '—';
+}
+
 // Built from App.BEHAVIORS rather than written into index.html, so the button
 // row and the values that reach the CSV cannot drift apart.
 function renderBehaviorGrid(onTap) {
@@ -458,7 +548,8 @@ const UI = {
   $, el, setStatus, fmtCoord, fmtTime, updatePositionUI, updateGpsUI, initMap, drawTrackPoint,
   loadTileManifest,
   drawEventMarker, loadExistingIntoMap, renderTagGrid, openNotesPrompt, renderTagManager,
-  showFocalPanel, showTab, setTrackToggle, setFocalHeader, refreshFocalIdState, openClearModal, setActiveIntervalButton, refreshBlowCount, bumpBlowCount,
+  showFocalPanel, showTab, setTrackToggle, setTransectToggle, setFocalHeader, refreshFocalIdState, openClearModal, setActiveIntervalButton, refreshBlowCount, bumpBlowCount,
   startIntervalTimer, stopIntervalTimer, setActivityButtons, clearOptionalFields,
   renderBehaviorGrid, flashBehavior,
+  setTrawlHeader, showTrawlPanel, startTrawlTimer, stopTrawlTimer,
 };
